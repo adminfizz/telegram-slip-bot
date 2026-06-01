@@ -343,6 +343,47 @@ function clearTxFilters() {
   renderTransactions();
 }
 
+function txDownload(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ส่งออก Excel (.xlsx) เฉพาะรายการที่กรองไว้ในหน้านี้
+async function exportTxXlsx() {
+  const list = txItems.filter(txFilterMatch);
+  if (!list.length) return showToast('ไม่มีรายการให้ส่งออก (ลองล้างตัวกรอง)', 'info');
+  try {
+    const res = await fetch('/api/transactions/export-xlsx', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: list }),
+    });
+    if (!res.ok) return showToast('ส่งออก Excel ไม่สำเร็จ', 'error');
+    txDownload(await res.blob(), `รายการ_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    showToast(`⬇️ ส่งออก ${list.length} รายการ (Excel) แล้ว`, 'success');
+  } catch (_) { showToast('ส่งออก Excel ไม่สำเร็จ', 'error'); }
+}
+
+// ส่งออก CSV เฉพาะรายการที่กรองไว้ (สร้างฝั่ง client + BOM ให้ Excel อ่านไทยได้)
+function exportTxCsv() {
+  const list = txItems.filter(txFilterMatch);
+  if (!list.length) return showToast('ไม่มีรายการให้ส่งออก (ลองล้างตัวกรอง)', 'info');
+  const esc = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const head = ['วันที่', 'บัญชี', 'ธนาคาร', 'ประเภท', 'ยอดเงิน', 'ค่าธรรมเนียม', 'ผู้รับ', 'เลขบัญชีผู้รับ', 'หมายเหตุ'];
+  let sumA = 0, sumF = 0;
+  const lines = list.map(t => {
+    sumA += Number(t.amount || 0); sumF += Number(t.fee || 0);
+    return [t.date || '', t.last4 ? `****${t.last4}` : '', t.bank || '', t.tx_type || '',
+      Number(t.amount || 0), Number(t.fee || 0), t.counterparty || '',
+      t.recipient_last4 ? `****${t.recipient_last4}` : '', t.note || ''].map(esc).join(',');
+  });
+  const total = ['รวม', '', '', '', sumA, sumF, `${list.length} รายการ`, '', ''].map(esc).join(',');
+  const csv = '﻿' + [head.map(esc).join(','), ...lines, total].join('\n');
+  txDownload(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `รายการ_${new Date().toISOString().slice(0, 10)}.csv`);
+  showToast(`⬇️ ส่งออก ${list.length} รายการ (CSV) แล้ว`, 'success');
+}
+
 function editTransaction(hash) {
   if (publicReadOnly) return showToast('โหมดดูอย่างเดียว: แก้ไขไม่ได้', 'info');
   txEditing = hash; renderTransactions();

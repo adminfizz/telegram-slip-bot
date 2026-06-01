@@ -683,7 +683,7 @@ function createDashboard(port = 3000, options = {}) {
   const shouldAutoStart = options.autoStart !== false && !process.env.VERCEL;
   const app = express();
   
-  app.use(express.json());
+  app.use(express.json({ limit: '5mb' }));
 
   // ── Session login (cookie) — หน้า login อยู่ในเว็บ ไม่ใช่ popup ของ browser ──
   app.use((req, res, next) => {
@@ -1269,6 +1269,34 @@ pin.focus();
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="report_${(targetDate||'today').replace(/[~]/g,'_')}.xlsx"`);
+      res.send(buf);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  // ส่งออก Excel ของรายการที่กรองไว้ (client ส่งรายการที่กรองแล้วมา) — อ่านอย่างเดียว viewer ก็ทำได้
+  app.post('/api/transactions/export-xlsx', async (req, res) => {
+    try {
+      const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+      const XLSX = require('xlsx');
+      const rows = [['วันที่', 'บัญชี', 'ธนาคาร', 'ประเภท', 'ยอดเงิน', 'ค่าธรรมเนียม', 'ผู้รับ', 'เลขบัญชีผู้รับ', 'หมายเหตุ']];
+      let sumA = 0, sumF = 0;
+      items.forEach(t => {
+        sumA += Number(t.amount || 0); sumF += Number(t.fee || 0);
+        rows.push([
+          t.date || '', t.last4 ? `****${t.last4}` : '', t.bank || '', t.tx_type || '',
+          Number(t.amount || 0), Number(t.fee || 0), t.counterparty || '',
+          t.recipient_last4 ? `****${t.recipient_last4}` : '', t.note || '',
+        ]);
+      });
+      rows.push([]);
+      rows.push(['รวม', '', '', '', sumA, sumF, `${items.length} รายการ`, '', '']);
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 11 }, { wch: 22 }, { wch: 14 }, { wch: 22 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'รายการ');
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="transactions.xlsx"');
       res.send(buf);
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });

@@ -18,7 +18,7 @@ const {
   addReviewItem,
 } = require('./sheets');
 const { extractSlipData } = require('./ocr');
-const { parseSlipData } = require('./parser');
+const { parseSlipData, slipDateWarning } = require('./parser');
 const { uploadSlip } = require('./drive');
 const { mirrorSlip, clearLocalDb } = require('./localdb');
 const slipQueue = require('./queue');
@@ -520,10 +520,18 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
 
   const hasLast4 = parsedData && parsedData.last4 && parsedData.last4 !== 'UNKNOWN' && parsedData.last4 !== 'null';
 
-  // ── เข้าคิว "รอตรวจ" เมื่อ: ใช้ตัวสำรอง (review) หรือจับไม่ครบ (manual) — ไม่บันทึกชีตทันที ──
+  // ── ตรวจวันที่น่าสงสัย (อาจ OCR อ่านเดือน/วันผิด) เทียบกับเวลาที่รับสลิป (job.createdAt) ──
+  // window ปรับได้ผ่าน env SLIP_DATE_MAX_AGE_DAYS (ดีฟอลต์ 14 วัน) — สลิปเก่ากว่านี้/อนาคต จะถูกส่งเข้าคิวรอตรวจ
+  const maxAgeDays = Number(process.env.SLIP_DATE_MAX_AGE_DAYS || 14);
+  const dateWarn = (hasLast4 && parsedData && parsedData.date)
+    ? slipDateWarning(parsedData.date, job.createdAt, maxAgeDays)
+    : null;
+
+  // ── เข้าคิว "รอตรวจ" เมื่อ: ใช้ตัวสำรอง (review) หรือจับไม่ครบ (manual) หรือวันที่น่าสงสัย — ไม่บันทึกชีตทันที ──
   // (งานเก่าที่ค้างคิวจากก่อนอัปเดตจะมี ocrStatus = undefined → ถือว่า auto ถ้ามีเลขบัญชี เพื่อความเข้ากันได้ย้อนหลัง)
-  if ((ocrStatus && ocrStatus !== 'auto') || !hasLast4) {
+  if ((ocrStatus && ocrStatus !== 'auto') || !hasLast4 || dateWarn) {
     const isManual = ocrStatus === 'manual' || !hasLast4;
+    if (dateWarn) console.log(`[date-guard] ${jobId}: ${dateWarn}`);
     // อัปโหลดรูปขึ้น Drive ก่อน (best-effort) เพื่อให้หน้าเว็บรอตรวจมีรูปให้ดู
     let driveLink = job.driveLink || null;
     if (!driveLink) {
@@ -551,7 +559,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
       driveLink: driveLink || '',
       ocrText: ocrText || '',
       provider: ocrProvider || '',
-      reason: isManual ? 'จับไม่ครบ — ต้องกรอกเอง' : 'ใช้ตัวสำรอง — รอยืนยัน',
+      reason: dateWarn ? `วันที่น่าสงสัย — ${dateWarn}` : (isManual ? 'จับไม่ครบ — ต้องกรอกเอง' : 'ใช้ตัวสำรอง — รอยืนยัน'),
       senderTG: job.senderTG || '-',
       fileHash,
     };
@@ -563,7 +571,14 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
     await updateQueueStep(task, 'review');
     cleanup(downloadPath);
 
-    const msg = isManual
+    const msg = dateWarn
+      ? [
+          `🟠 งาน ${jobId}: วันที่บนสลิปน่าสงสัย`,
+          `🔢 บัญชี: ****${reviewItem.last4}  💰 ${Number(reviewItem.amount).toLocaleString('en-US')} บาท  📅 ${reviewItem.date}`,
+          `❓ ${dateWarn}`,
+          '📝 เข้าคิว "รอตรวจ" บนเว็บแล้ว — โปรดตรวจ/แก้วันที่ก่อนยืนยันบันทึก',
+        ].join('\n')
+      : isManual
       ? [
           `⚠️ งาน ${jobId}: อ่านสลิปไม่ครบ`,
           ocrProvider ? `🔎 ตรวจด้วย: ${ocrProvider}` : '',

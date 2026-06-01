@@ -33,6 +33,87 @@ body {
   overflow-x: hidden;
 }
 
+/* === LOADING SCREEN === */
+.boot-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(900px 600px at 50% 35%, rgba(61,123,255,0.18), transparent 60%),
+    radial-gradient(700px 500px at 80% 90%, rgba(168,85,247,0.12), transparent 60%),
+    var(--bg-primary);
+  opacity: 1;
+  transition: opacity .6s ease;
+}
+.boot-loader.boot-hide { opacity: 0; pointer-events: none; }
+.boot-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.boot-logo {
+  font-size: 68px;
+  line-height: 1;
+  filter: drop-shadow(0 0 22px var(--accent-glow));
+  animation: bootFloat 2.2s ease-in-out infinite;
+}
+.boot-title {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  background: linear-gradient(90deg, #6699ff, #a855f7, #00d68f);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: bootShimmer 3s linear infinite;
+}
+.boot-sub { font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+.boot-bar {
+  width: 300px;
+  max-width: 72vw;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(120,150,220,0.12);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.boot-bar-fill {
+  position: relative;
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #22d3ee 60%, #00d68f);
+  box-shadow: 0 0 14px var(--accent-glow);
+  transition: width .15s ease-out;
+}
+.boot-bar-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: translateX(-100%);
+  animation: bootShine 1.4s ease-in-out infinite;
+}
+.boot-pct {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  letter-spacing: 1px;
+}
+@keyframes bootFloat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-10px) scale(1.04); }
+}
+@keyframes bootShimmer { to { background-position: 200% center; } }
+@keyframes bootShine {
+  0% { transform: translateX(-100%); }
+  60%, 100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boot-logo, .boot-title, .boot-bar-fill::after { animation: none; }
+}
+
 /* === APP LAYOUT === */
 .app {
   display: flex;

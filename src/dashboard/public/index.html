@@ -4,12 +4,46 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=30" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=37" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=30">
+  <link rel="stylesheet" href="/style.css?v=37">
 </head>
 <body>
+  <!-- Loading screen -->
+  <div id="bootLoader" class="boot-loader">
+    <div class="boot-inner">
+      <div class="boot-logo">🤖</div>
+      <div class="boot-title">Slip Bot</div>
+      <div class="boot-sub">กำลังเตรียมระบบ…</div>
+      <div class="boot-bar"><div class="boot-bar-fill" id="bootFill"></div></div>
+      <div class="boot-pct" id="bootPct">0%</div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    var fill=document.getElementById('bootFill'),
+        pct=document.getElementById('bootPct'),
+        loader=document.getElementById('bootLoader');
+    if(!loader) return;
+    var dur=3500, start=null;
+    function ease(t){ return t<0.5 ? 2*t*t : -1+(4-2*t)*t; } // easeInOutQuad
+    function step(ts){
+      if(start===null) start=ts;
+      var t=Math.min((ts-start)/dur,1), p=Math.round(ease(t)*100);
+      fill.style.width=p+'%'; pct.textContent=p+'%';
+      if(t<1){ requestAnimationFrame(step); }
+      else {
+        setTimeout(function(){
+          loader.classList.add('boot-hide');
+          setTimeout(function(){ loader.style.display='none'; }, 650);
+        }, 250);
+      }
+    }
+    requestAnimationFrame(step);
+  })();
+  </script>
+
   <div class="app">
     <!-- Sidebar -->
     <nav class="sidebar">
@@ -86,50 +120,6 @@
           </div>
         </div>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon blue">🔗</div>
-            <div class="stat-info">
-              <span class="stat-value" id="statBot">กำลังตรวจสอบ...</span>
-              <span class="stat-label">Telegram Bot</span>
-            </div>
-          </div>
-          <div class="stat-card" id="status-google">
-            <div class="stat-icon orange">📁</div>
-            <div class="stat-info">
-              <span class="stat-value" id="statDrive" style="font-size: 14px; color: #f59e0b;">กำลังตรวจสอบ...</span>
-              <span class="stat-label">Google Drive & Sheets</span>
-            </div>
-          </div>
-          
-          <div class="stat-card" id="status-tokens">
-            <div class="stat-icon purple">🧠</div>
-            <div class="stat-info">
-              <span class="stat-value" id="token-usage-text" style="font-size: 14px;">กำลังดึงจาก Google Sheets...</span>
-              <span class="stat-label">AI Tokens (Gemini)</span>
-            </div>
-          </div>
-
-          <div class="stat-card" id="status-queue">
-            <div class="stat-icon green">⏱️</div>
-            <div class="stat-info">
-              <span class="stat-value" id="statQueue" style="font-size: 14px;">กำลังตรวจสอบ...</span>
-              <span class="stat-label">OCR Queue</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="provider-stats-section">
-          <h3 class="provider-stats-title">🤖 สถิติการจับยอดแยกตามค่าย AI <span id="ocrHealth" class="ocr-health"></span></h3>
-          <div id="providerStats" class="provider-stats-grid">
-            <div class="prov-empty">กำลังโหลด...</div>
-          </div>
-          <div class="token-chart-box">
-            <h4 class="token-chart-title">📊 ยอด Token รายค่าย</h4>
-            <div id="tokenChart"><div class="prov-empty">กำลังโหลด...</div></div>
-          </div>
-        </div>
-
         <!-- แนวโน้มรายวัน -->
         <div class="trends-section">
           <div class="trends-head">
@@ -166,6 +156,52 @@
             </div>
           </div>
           <div id="typeChart" class="token-chart-box"><div class="prov-empty">กำลังโหลด...</div></div>
+        </div>
+
+        <!-- สถิติการจับยอด + ยอด Token (ย้ายลงมาไว้ใต้สัดส่วน) -->
+        <div class="provider-stats-section">
+          <h3 class="provider-stats-title">🤖 สถิติการจับยอดแยกตามค่าย AI <span id="ocrHealth" class="ocr-health"></span></h3>
+          <div id="providerStats" class="provider-stats-grid">
+            <div class="prov-empty">กำลังโหลด...</div>
+          </div>
+          <div class="token-chart-box">
+            <h4 class="token-chart-title">📊 ยอด Token รายค่าย</h4>
+            <div id="tokenChart"><div class="prov-empty">กำลังโหลด...</div></div>
+          </div>
+        </div>
+
+        <!-- การ์ดสถานะระบบ (ย้ายลงมาไว้ใต้สัดส่วน โอน/ถอน/ฝาก) -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon blue">🔗</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statBot">กำลังตรวจสอบ...</span>
+              <span class="stat-label">Telegram Bot</span>
+            </div>
+          </div>
+          <div class="stat-card" id="status-google">
+            <div class="stat-icon orange">📁</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statDrive" style="font-size: 14px; color: #f59e0b;">กำลังตรวจสอบ...</span>
+              <span class="stat-label">Google Drive & Sheets</span>
+            </div>
+          </div>
+
+          <div class="stat-card" id="status-tokens">
+            <div class="stat-icon purple">🧠</div>
+            <div class="stat-info">
+              <span class="stat-value" id="token-usage-text" style="font-size: 14px;">กำลังดึงจาก Google Sheets...</span>
+              <span class="stat-label">AI Tokens (Gemini)</span>
+            </div>
+          </div>
+
+          <div class="stat-card" id="status-queue">
+            <div class="stat-icon green">⏱️</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statQueue" style="font-size: 14px;">กำลังตรวจสอบ...</span>
+              <span class="stat-label">OCR Queue</span>
+            </div>
+          </div>
         </div>
 
         <div class="quota-meter" id="quotaMeter" hidden></div>
@@ -308,6 +344,8 @@
             <p class="live-updated" id="txUpdatedAt"></p>
           </div>
           <div class="jobs-actions">
+            <button class="btn btn-secondary" onclick="exportTxXlsx()">⬇️ Excel (ที่กรอง)</button>
+            <button class="btn btn-secondary" onclick="exportTxCsv()">⬇️ CSV</button>
             <button class="btn btn-secondary" onclick="loadTransactions(true)">🔄 รีเฟรช</button>
           </div>
         </div>
@@ -582,6 +620,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=30"></script>
+  <script src="/app.js?v=37"></script>
 </body>
 </html>

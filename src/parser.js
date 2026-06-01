@@ -136,4 +136,24 @@ function parseSlipData(jsonData) {
   }
 }
 
-module.exports = { parseSlipData, normalizeSlipDate };
+// ตรวจว่าวันที่ที่ OCR อ่านได้ "น่าสงสัย" ไหม (อนาคต หรือเก่ากว่าวันรับมากผิดปกติ)
+// ใช้กันกรณี OCR อ่านเดือน/วันผิด แล้วสลิปหายจากหน้าเว็บที่กรองตามเดือน
+// refIso = เวลาที่รับสลิป (job.createdAt) ถ้าไม่มีใช้เวลาปัจจุบัน; maxAgeDays = อายุย้อนหลังที่ยอมรับ
+// คืนค่า: ข้อความเตือน (string) ถ้าน่าสงสัย, หรือ null ถ้าปกติ
+function slipDateWarning(dateStr, refIso, maxAgeDays = 14) {
+  const m = String(dateStr || '').match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const slip = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (isNaN(slip.getTime())) return null;
+  // วันอ้างอิงตามเวลาไทย (เที่ยงคืน) จาก refIso หรือ now
+  const ref = refIso ? new Date(refIso) : new Date();
+  const bkk = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(isNaN(ref.getTime()) ? new Date() : ref);
+  const [ry, rm, rd] = bkk.split('-').map(Number);
+  const refMidnight = new Date(ry, rm - 1, rd);
+  const days = Math.round((refMidnight - slip) / 86400000); // บวก = อดีต, ลบ = อนาคต
+  if (days < -1) return `วันที่บนสลิปเป็นอนาคต (${m[0]}) — อาจอ่านวัน/เดือนผิด`;
+  if (days > maxAgeDays) return `วันที่บนสลิปเก่ากว่าวันรับ ${days} วัน (${m[0]}) — อาจอ่านเดือนผิด`;
+  return null;
+}
+
+module.exports = { parseSlipData, normalizeSlipDate, slipDateWarning };

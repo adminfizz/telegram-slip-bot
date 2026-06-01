@@ -891,6 +891,9 @@ async function getOrCreateAccountTab(auth, spreadsheetId, last4, bank) {
   await applySheetFormatting(sheets, spreadsheetId, tabName, false);
   console.log(`🎨 ตกแต่ง tab "${tabName}" สำเร็จ`);
 
+  // ใส่ช่องยอดรวมของบัญชีนี้ (สูตรอัตโนมัติ)
+  try { await ensureAccountTotalCells(sheets, spreadsheetId, tabName); } catch (_) {}
+
   // Add to summary tab
   const summaryResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -1376,22 +1379,29 @@ async function updateSlipByHash(auth, spreadsheetId, targetLast4, hash, fields =
   const sheets = sheetsClient(auth);
   const tabName = `บัญชี_${targetLast4}`;
   if (!hash) return { ok: false, error: 'ไม่มี hash' };
-  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${tabName}'!A:K` });
+  // อ่านแบบ UNFORMATTED เพื่อให้ยอด/ค่าธรรมเนียมกลับมาเป็น "ตัวเลข" ไม่ใช่ "30,000.00" (string)
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${tabName}'!A:K`, valueRenderOption: 'UNFORMATTED_VALUE' });
   const rows = r.data.values || [];
   let idx = -1;
-  for (let i = 1; i < rows.length; i++) { if ((rows[i][8] || '') === hash) { idx = i; break; } }
+  for (let i = 1; i < rows.length; i++) { if (String(rows[i][8] || '') === hash) { idx = i; break; } }
   if (idx < 0) return { ok: false, error: 'ไม่พบรายการ (อาจถูกลบไปแล้ว)' };
   const cur = rows[idx];
-  const pick = (k, i, isNum) => (fields[k] != null && String(fields[k]) !== '' ? (isNum ? Number(fields[k]) : fields[k]) : (cur[i] != null ? cur[i] : ''));
+  // คอลัมน์ตัวเลข (amount/fee) แปลงเป็น Number เสมอ (ตัดลูกน้ำออก) ทั้งค่าที่แก้ใหม่และค่าเดิม → SUM ในชีตบวกได้
+  const numClean = (v) => Number(String(v == null ? '' : v).replace(/,/g, '')) || 0;
+  const pick = (k, i, isNum) => {
+    const useField = fields[k] != null && String(fields[k]) !== '';
+    const raw = useField ? fields[k] : (cur[i] != null ? cur[i] : '');
+    return isNum ? numClean(raw) : raw;
+  };
   const newRow = [
     pick('date', 0), pick('amount', 1, true), pick('fee', 2, true), pick('tx_type', 3),
     pick('counterparty', 4), pick('bank', 5),
-    cur[6] || '-', cur[7] || '', cur[8] || hash, // G senderTG, H driveLink, I hash (คงเดิม)
+    cur[6] || '-', cur[7] || '', String(cur[8] || hash), // G senderTG, H driveLink, I hash (คงเดิม)
     fields.recipient_last4 != null ? String(fields.recipient_last4).replace(/\D/g, '') : (cur[9] || ''),
     fields.note != null ? fields.note : (cur[10] || ''),
   ];
   await sheets.spreadsheets.values.update({
-    spreadsheetId, range: `'${tabName}'!A${idx + 1}:K${idx + 1}`, valueInputOption: 'RAW', resource: { values: [newRow] },
+    spreadsheetId, range: `'${tabName}'!A${idx + 1}:K${idx + 1}`, valueInputOption: 'USER_ENTERED', resource: { values: [newRow] },
   });
   scheduleSummarySync(auth, spreadsheetId);
   return { ok: true };
@@ -1608,6 +1618,13 @@ async function syncSummaryTab(auth, spreadsheetId) {
     ]);
   }
 
+  // แถวรวมทุกบัญชี (grand total) — รวมคอลัมน์ D/E/F
+  if (rows.length > 0) {
+    const n = rows.length;
+    const colSum = (i) => rows.reduce((a, r) => a + (Number(r[i]) || 0), 0);
+    rows.push(['', `🔢 รวมทุกบัญชี (${n} บัญชี)`, '', colSum(3), colSum(4), colSum(5)]);
+  }
+
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
     range: `'${summaryTitle}'!A2:F`,
@@ -1621,6 +1638,16 @@ async function syncSummaryTab(auth, spreadsheetId) {
       resource: { values: rows },
     });
   }
+}
+
+// ใส่ช่อง "ยอดรวมของบัญชีนี้" (สูตร auto-update) ในแท็บบัญชี — วางที่คอลัมน์ M/N (นอกคอลัมน์ข้อมูล A:K)
+async function ensureAccountTotalCells(sheets, spreadsheetId, tabName) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${tabName}'!M1:N2`,
+    valueInputOption: 'USER_ENTERED',
+    resource: { values: [['💰 ยอดรวมบัญชีนี้', '=SUM(B2:B)'], ['💸 ค่าธรรมเนียมรวม', '=SUM(C2:C)']] },
+  });
 }
 
 module.exports = {
@@ -1642,6 +1669,7 @@ module.exports = {
   wipeTabData,
   wipeAllTabsData,
   syncSummaryTab,
+  ensureAccountTotalCells,
   formatAllTabs,
   getSystemState,
   updateSystemState,
