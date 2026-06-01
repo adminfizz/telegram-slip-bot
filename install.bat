@@ -33,29 +33,14 @@ if errorlevel 1 (
   call npm install -g pm2
 )
 
-REM --- 4) ตรวจไฟล์ลับที่ต้องคัดลอกมาจากเครื่องหลัก ---
+REM --- 4) เปิดเมนูตั้งค่า (เขียน .env ในเครื่อง) + ดึงค่าจาก Vercel ได้ + deploy local ---
 echo.
-echo [3/5] ตรวจไฟล์ตั้งค่า/ความลับ...
-set MISSING=0
-if not exist ".env" ( echo   [!] ขาด .env  ^(คัดลอกจากเครื่องหลักมาวางในโฟลเดอร์นี้^) & set MISSING=1 )
-if not exist "credentials.json" ( echo   [!] ขาด credentials.json & set MISSING=1 )
-if not exist "tokens\google_token.json" ( echo   [!] ขาด tokens\google_token.json ^(Google OAuth token^) & set MISSING=1 )
-if "%MISSING%"=="1" (
-  echo.
-  echo   *** ยังขาดไฟล์ลับ — คัดลอกจากเครื่องหลักมาก่อน แล้วรัน install.bat ใหม่ ***
-  echo   ดูรายละเอียดใน SETUP.md
-  echo.
-  pause
-  exit /b 1
-)
-echo   [OK] ไฟล์ลับครบ
+echo [3/5] เปิดเมนูตั้งค่า...
+echo   (เลือก P เพื่อดึง key ทั้งหมดจาก Vercel บัญชีเดิม หรือกรอกเอง แล้ว S เพื่อบันทึก+รัน)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0settings.ps1"
+echo.
 
-REM --- 5) เริ่มบอทด้วย PM2 + บันทึก list ---
-echo.
-echo [4/5] เริ่มบอทด้วย PM2...
-call npx pm2 start ecosystem.config.js
-call npx pm2 save
-echo.
+REM --- 5) เสร็จ ---
 echo [5/5] เสร็จแล้ว!
 echo.
 echo   - ดูสถานะ:  npx pm2 status
