@@ -1,0 +1,7 @@
+.env
+credentials.json
+tokens/
+temp/
+app.log
+ai_usage.json
+node_modules/

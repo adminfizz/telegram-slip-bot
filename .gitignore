@@ -1,0 +1,19 @@
+# --- Secrets / credentials (NEVER commit) ---
+.env
+.env.*
+!.env.example
+credentials.json
+tokens/
+*.token.json
+
+# --- Local data (financial / runtime) ---
+data/
+ai_usage.json
+app.log
+*.log
+temp/
+
+# --- Deps / build / platform ---
+node_modules/
+.vercel
+.DS_Store

@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slip Bot — Dashboard</title>
+  <link rel="icon" href="/favicon.svg?v=30" type="image/svg+xml">
+  <meta name="theme-color" content="#0a0f1e">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css?v=30">
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="logo">
+        <div class="logo-icon">🤖</div>
+        <span class="logo-text">Slip Bot</span>
+      </div>
+      <div class="nav-links">
+        <a href="#" class="nav-item active" data-tab="dashboard">
+          <span class="nav-icon">📊</span> Dashboard
+        </a>
+        <a href="#" class="nav-item" data-tab="report">
+          <span class="nav-icon">📈</span> สรุปยอด
+        </a>
+        <a href="#" class="nav-item" data-tab="jobs">
+          <span class="nav-icon">⏱️</span> Jobs/Queue
+        </a>
+        <a href="#" class="nav-item" data-tab="review">
+          <span class="nav-icon">🟡</span> รอตรวจ <span class="nav-badge" id="reviewBadge" hidden>0</span>
+        </a>
+        <a href="#" class="nav-item" data-tab="transactions">
+          <span class="nav-icon">📜</span> รายการ
+        </a>
+        <a href="#" class="nav-item" data-tab="settings">
+          <span class="nav-icon">⚙️</span> ตั้งค่า
+        </a>
+        <a href="#" class="nav-item" data-tab="logs">
+          <span class="nav-icon">📋</span> Logs
+        </a>
+      </div>
+      <div class="sidebar-footer">
+        <div class="bot-status" id="botStatusIndicator">
+          <span class="status-dot offline"></span>
+          <span id="statusText">ยังไม่ได้ตั้งค่า</span>
+        </div>
+        <button class="btn-logout" id="btnLogout" onclick="logout()">🚪 ออกจากระบบ</button>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      
+      <!-- Dashboard Tab -->
+      <section class="tab-content active" id="tab-dashboard">
+        <div class="page-header">
+          <h1>Dashboard</h1>
+          <p class="subtitle">ภาพรวมระบบ Telegram Slip Bot</p>
+          <p class="live-updated" id="dashboardUpdatedAt">กำลังเชื่อมต่อข้อมูลสด...</p>
+        </div>
+
+        <div id="alertBanner" class="alert-banner" hidden></div>
+
+        <!-- การ์ดสรุป วันนี้ + เดือนนี้ -->
+        <div class="summary-cards">
+          <div class="today-card" id="todayCard">
+            <div class="today-head"><span>📅 วันนี้</span><small id="todayUpdated"></small></div>
+            <div class="today-metrics">
+              <div class="today-main"><strong id="todayTotal">0.00</strong><small>ยอดรวม (บาท)</small></div>
+              <div><b id="todayCount">0</b><small>สลิป</small></div>
+              <div><b id="todayTransfer">0</b><small>โอน</small></div>
+              <div><b id="todayWithdraw">0</b><small>ถอน</small></div>
+              <div><b id="todayFee">0.00</b><small>ค่าธรรมเนียม</small></div>
+            </div>
+          </div>
+          <div class="today-card month-card" id="monthCard">
+            <div class="today-head"><span>🗓️ เดือนนี้ <small id="monthLabel"></small></span></div>
+            <div class="today-metrics">
+              <div class="today-main"><strong id="monthTotal">0.00</strong><small>ยอดรวม (บาท)</small></div>
+              <div><b id="monthCount">0</b><small>สลิป</small></div>
+              <div><b id="monthTransfer">0</b><small>โอน</small></div>
+              <div><b id="monthWithdraw">0</b><small>ถอน</small></div>
+              <div><b id="monthFee">0.00</b><small>ค่าธรรมเนียม</small></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon blue">🔗</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statBot">กำลังตรวจสอบ...</span>
+              <span class="stat-label">Telegram Bot</span>
+            </div>
+          </div>
+          <div class="stat-card" id="status-google">
+            <div class="stat-icon orange">📁</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statDrive" style="font-size: 14px; color: #f59e0b;">กำลังตรวจสอบ...</span>
+              <span class="stat-label">Google Drive & Sheets</span>
+            </div>
+          </div>
+          
+          <div class="stat-card" id="status-tokens">
+            <div class="stat-icon purple">🧠</div>
+            <div class="stat-info">
+              <span class="stat-value" id="token-usage-text" style="font-size: 14px;">กำลังดึงจาก Google Sheets...</span>
+              <span class="stat-label">AI Tokens (Gemini)</span>
+            </div>
+          </div>
+
+          <div class="stat-card" id="status-queue">
+            <div class="stat-icon green">⏱️</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statQueue" style="font-size: 14px;">กำลังตรวจสอบ...</span>
+              <span class="stat-label">OCR Queue</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="provider-stats-section">
+          <h3 class="provider-stats-title">🤖 สถิติการจับยอดแยกตามค่าย AI <span id="ocrHealth" class="ocr-health"></span></h3>
+          <div id="providerStats" class="provider-stats-grid">
+            <div class="prov-empty">กำลังโหลด...</div>
+          </div>
+          <div class="token-chart-box">
+            <h4 class="token-chart-title">📊 ยอด Token รายค่าย</h4>
+            <div id="tokenChart"><div class="prov-empty">กำลังโหลด...</div></div>
+          </div>
+        </div>
+
+        <!-- แนวโน้มรายวัน -->
+        <div class="trends-section">
+          <div class="trends-head">
+            <h3 class="provider-stats-title">📈 แนวโน้มรายวัน</h3>
+            <div class="trends-range">
+              <button class="btn btn-chip" onclick="loadTrends(7)">7 วัน</button>
+              <button class="btn btn-chip" onclick="loadTrends(30)">30 วัน</button>
+            </div>
+          </div>
+          <div id="trendsChart" class="trends-chart"><div class="prov-empty">กำลังโหลด...</div></div>
+        </div>
+
+        <!-- ยอดรวมต่อบัญชี (กราฟแท่ง) -->
+        <div class="trends-section">
+          <div class="trends-head">
+            <h3 class="provider-stats-title">💳 ยอดรวมต่อบัญชี</h3>
+            <div class="trends-range">
+              <button class="btn btn-chip" id="acctChartToday" onclick="loadAccountChart('today')">วันนี้</button>
+              <button class="btn btn-chip" id="acctChartMonth" onclick="loadAccountChart('month')">เดือนนี้</button>
+              <button class="btn btn-chip" id="acctChartAll" onclick="loadAccountChart('all')">ทั้งหมด</button>
+            </div>
+          </div>
+          <div id="acctChart" class="token-chart-box"><div class="prov-empty">กำลังโหลด...</div></div>
+        </div>
+
+        <!-- สัดส่วน โอน/ถอน/ฝาก -->
+        <div class="trends-section">
+          <div class="trends-head">
+            <h3 class="provider-stats-title">📊 สัดส่วน โอน / ถอน / ฝาก</h3>
+            <div class="trends-range">
+              <button class="btn btn-chip" id="typeChartToday" onclick="setTypeChartScope('today')">วันนี้</button>
+              <button class="btn btn-chip" id="typeChartMonth" onclick="setTypeChartScope('month')">เดือนนี้</button>
+              <button class="btn btn-chip" id="typeChartAll" onclick="setTypeChartScope('all')">ทั้งหมด</button>
+            </div>
+          </div>
+          <div id="typeChart" class="token-chart-box"><div class="prov-empty">กำลังโหลด...</div></div>
+        </div>
+
+        <div class="quota-meter" id="quotaMeter" hidden></div>
+
+        <div class="action-section">
+          <button class="btn btn-primary btn-lg" id="btnStartBot" onclick="startBot()">
+            <span class="btn-icon">🚀</span> เริ่มต้น Bot
+          </button>
+          <button class="btn btn-danger btn-lg" id="btnStopBot" onclick="stopBot()" style="display:none;">
+            <span class="btn-icon">⏹️</span> หยุด Bot
+          </button>
+        </div>
+
+        <div class="info-cards">
+          <div class="info-card" id="sheetLinkCard" style="display:none;">
+            <h3>📋 Google Sheets</h3>
+            <a href="#" id="sheetLink" target="_blank" class="link-btn">เปิด Spreadsheet</a>
+          </div>
+          
+          <div class="info-card" style="margin-top: 16px;">
+            <h3>📌 คำสั่งบน Telegram (Commands)</h3>
+            <ul class="cmd-list">
+              <li><strong>📷 ส่งรูปสลิป</strong> — วิเคราะห์ + บันทึกลง Sheet อัตโนมัติ</li>
+              <li><strong>/report</strong> — สรุปยอดวันนี้ (ทุกบัญชี)</li>
+              <li><strong>/report 4321</strong> — เฉพาะบัญชีลงท้าย 4321</li>
+              <li><strong>/report all 2026-06-01</strong> — เลือกวัน/ทั้งหมด</li>
+              <li><strong>/add 4321 500 โอน</strong> — บันทึกเองไม่มีสลิป</li>
+              <li><strong>/undo 4321</strong> — ลบรายการล่าสุดของบัญชีนั้น</li>
+              <li><strong>/clear 4321</strong> · <strong>/clear_all</strong> — ล้างยอดวันนี้</li>
+              <li><strong>/wipe 4321</strong> · <strong>/wipe_all</strong> — ล้างทั้งหมด + ลบรูป Drive</li>
+              <li><strong>/status</strong> — สถานะบอท + token</li>
+              <li><strong>/queue</strong> — เช็กคิว OCR ที่กำลังประมวลผล</li>
+              <li><strong>/failed</strong> · <strong>/retry_failed</strong> — ดู/รันงานที่ล้มเหลวใหม่</li>
+              <li><strong>/sheetlink</strong> — ขอลิงก์ Google Sheets</li>
+              <li><strong>/help</strong> · <strong>/start</strong> — เมนู/วิธีใช้งาน</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Report Tab -->
+      <section class="tab-content" id="tab-report">
+        <div class="page-header" style="justify-content: space-between; align-items: center;">
+          <div>
+            <h1>📈 สรุปยอดเงิน</h1>
+            <p class="subtitle">เริ่มต้นแสดงยอดรวมทั้งหมด • เลือกช่วงวันเพื่อกรองได้</p>
+          </div>
+          <div class="report-controls">
+            <button class="btn btn-chip" onclick="reportPreset('today')">วันนี้</button>
+            <button class="btn btn-chip" onclick="reportPreset('yesterday')">เมื่อวาน–วันนี้</button>
+            <button class="btn btn-chip" onclick="reportPreset('7d')">7 วัน</button>
+            <button class="btn btn-chip" onclick="reportPreset('thisMonth')">เดือนนี้</button>
+            <button class="btn btn-chip" onclick="reportPreset('lastMonth')">เดือนก่อน</button>
+            <div class="date-range">
+              <input type="date" id="reportFrom" class="date-input" aria-label="จากวันที่">
+              <span class="range-sep">ถึง</span>
+              <input type="date" id="reportTo" class="date-input" aria-label="ถึงวันที่">
+            </div>
+            <button class="btn btn-primary" onclick="applyReportFilter()">🔍 กรอง</button>
+            <button class="btn btn-secondary" onclick="showAllReport()">📚 ทั้งหมด</button>
+            <button class="btn btn-secondary" onclick="loadReport()">🔄 รีเฟรช</button>
+            <button class="btn btn-secondary" onclick="exportReportCsv()">⬇️ CSV</button>
+            <button class="btn btn-secondary" onclick="exportReportXlsx()">⬇️ Excel</button>
+            <button class="btn btn-danger" id="btnWipeAll" onclick="wipeAllData()">🗑️ ล้างชีต+Drive</button>
+          </div>
+        </div>
+
+        <div class="report-search">
+          <input type="text" id="reportSearch" placeholder="🔎 ค้นหาบัญชี / ธนาคาร / ผู้รับ..." oninput="filterReport()">
+        </div>
+
+        <div id="reportContainer">
+          <div class="info-card" style="text-align: center; padding: 40px; color: var(--text-muted);">
+            กดปุ่ม "รีเฟรชข้อมูล" เพื่อดึงข้อมูลล่าสุดจาก Google Sheets
+          </div>
+        </div>
+      </section>
+
+      <!-- Jobs / Queue Tab -->
+      <section class="tab-content" id="tab-jobs">
+        <div class="page-header" style="justify-content: space-between; align-items: center;">
+          <div>
+            <h1>⏱️ Jobs / OCR Queue</h1>
+            <p class="subtitle">ติดตามงาน OCR แบบถาวร กู้คืนหลัง reboot และ retry งานที่ล้มเหลว</p>
+            <p class="live-updated" id="jobsUpdatedAt">ยังไม่ได้โหลดข้อมูล</p>
+          </div>
+          <div class="jobs-actions">
+            <select id="jobsStatusFilter" class="input-wrapper" onchange="loadJobs(true)">
+              <option value="all">ทุกสถานะ</option>
+              <option value="queued">queued</option>
+              <option value="processing">processing</option>
+              <option value="review">review (รอตรวจ)</option>
+              <option value="failed">failed</option>
+              <option value="done">done</option>
+              <option value="duplicate">duplicate</option>
+            </select>
+            <input type="text" id="jobsSearch" class="input-wrapper" placeholder="🔎 ค้นหา id/บัญชี/ผู้ส่ง" style="min-width:160px;" oninput="renderJobs(lastJobsData, true)">
+            <button class="btn btn-secondary" onclick="loadJobs(true)">รีเฟรช</button>
+            <button class="btn btn-primary" id="btnRetryFailedAll" onclick="retryAllFailedJobs()">Retry failed all</button>
+          </div>
+        </div>
+
+        <div id="jobsCurrent" class="job-current" hidden></div>
+
+        <div class="jobs-summary-grid">
+          <div class="summary-status-card"><span>ทั้งหมด</span><strong id="jobsTotal">0</strong></div>
+          <div class="summary-status-card"><span>รอ/ค้าง</span><strong id="jobsRecoverable">0</strong></div>
+          <div class="summary-status-card"><span>Failed</span><strong id="jobsFailed">0</strong></div>
+          <div class="summary-status-card"><span>Done</span><strong id="jobsDone">0</strong></div>
+        </div>
+
+        <div id="jobsContainer" class="jobs-container">
+          <div class="report-loading">กำลังโหลด jobs...</div>
+        </div>
+      </section>
+
+      <!-- Review Queue Tab -->
+      <section class="tab-content" id="tab-review">
+        <div class="page-header" style="justify-content: space-between; align-items: center;">
+          <div>
+            <h1>🟡 คิวรอตรวจ</h1>
+            <p class="subtitle">สลิปที่จับด้วย "ตัวสำรอง" หรืออ่านไม่ครบ — ตรวจ/แก้ไขแล้วยืนยันบันทึกลงชีต</p>
+            <p class="live-updated" id="reviewUpdatedAt">ยังไม่ได้โหลดข้อมูล</p>
+          </div>
+          <div class="jobs-actions">
+            <button class="btn btn-secondary" onclick="loadReview(true)">🔄 รีเฟรช</button>
+          </div>
+        </div>
+        <div id="reviewContainer" class="jobs-container">
+          <div class="report-loading">กำลังโหลด...</div>
+        </div>
+      </section>
+
+      <!-- Transactions Tab -->
+      <section class="tab-content" id="tab-transactions">
+        <div class="page-header" style="justify-content: space-between; align-items: center;">
+          <div>
+            <h1>📜 รายการรายตัว</h1>
+            <p class="subtitle">ดูทุกรายการ · ค้นหา · ลบรายการที่ผิด/ซ้ำ (500 รายการล่าสุด)</p>
+            <p class="live-updated" id="txUpdatedAt"></p>
+          </div>
+          <div class="jobs-actions">
+            <button class="btn btn-secondary" onclick="loadTransactions(true)">🔄 รีเฟรช</button>
+          </div>
+        </div>
+        <div class="report-search">
+          <input type="text" id="txSearch" placeholder="🔎 ค้นหา บัญชี / ผู้รับ / ยอด / หมายเหตุ..." oninput="renderTransactions()">
+        </div>
+        <div class="tx-filters">
+          <label>จาก<input type="date" id="txFrom" oninput="renderTransactions()"></label>
+          <label>ถึง<input type="date" id="txTo" oninput="renderTransactions()"></label>
+          <label>ยอด ≥<input type="number" id="txMin" placeholder="0" oninput="renderTransactions()"></label>
+          <label>ยอด ≤<input type="number" id="txMax" placeholder="∞" oninput="renderTransactions()"></label>
+          <label>ประเภท<select id="txType" onchange="renderTransactions()">
+            <option value="">ทั้งหมด</option><option>โอน</option><option>ถอน</option><option>ฝาก/รับ</option><option>ชำระบิล</option><option>อื่นๆ</option>
+          </select></label>
+          <button class="btn btn-chip" onclick="clearTxFilters()">ล้างตัวกรอง</button>
+        </div>
+        <div id="txContainer" class="jobs-container"><div class="report-loading">กำลังโหลด...</div></div>
+      </section>
+
+      <!-- Settings Tab -->
+      <section class="tab-content" id="tab-settings">
+        <div class="page-header">
+          <h1>⚙️ ตั้งค่า</h1>
+          <p class="subtitle">กรอกข้อมูลเพื่อเชื่อมต่อบริการต่างๆ</p>
+        </div>
+
+        <div class="settings-mode-card" id="settingsModeCard">
+          <div>
+            <span class="mode-label">Settings mode</span>
+            <strong id="settingsModeText">Checking...</strong>
+          </div>
+          <span class="mode-pill" id="settingsModePill">Loading</span>
+        </div>
+
+        <div class="public-readonly-banner" id="publicReadonlyBanner" hidden>
+          <strong>Public dashboard</strong>
+          <span>This dashboard is read-only. Config changes, secret uploads, and destructive actions are disabled.</span>
+        </div>
+
+        <section class="settings-section" id="configSummarySection">
+          <div class="section-header">
+            <span class="section-icon">🩺</span>
+            <div>
+              <h2>System Config Summary</h2>
+              <p>Read-only status from /api/config-status. Secrets are never shown.</p>
+            </div>
+          </div>
+          <div class="config-summary-grid">
+            <div class="summary-status-card">
+              <span>Telegram</span>
+              <strong id="summaryTelegram">Checking...</strong>
+            </div>
+            <div class="summary-status-card">
+              <span>Gemini</span>
+              <strong id="summaryGemini">Checking...</strong>
+            </div>
+            <div class="summary-status-card">
+              <span>Google Credentials</span>
+              <strong id="summaryCredentials">Checking...</strong>
+            </div>
+            <div class="summary-status-card">
+              <span>Spreadsheet</span>
+              <strong id="summarySpreadsheet">Checking...</strong>
+            </div>
+            <div class="summary-status-card">
+              <span>Dashboard Login</span>
+              <strong id="summaryDashboardAuth">Checking...</strong>
+            </div>
+            <div class="summary-status-card">
+              <span>Allowed Chats</span>
+              <strong id="summaryAllowedChats">Checking...</strong>
+            </div>
+          </div>
+          <p class="summary-note" id="configSummaryNote"></p>
+        </section>
+
+        <section class="settings-section" id="connectionTestSection">
+          <div class="section-header">
+            <span class="section-icon">🔌</span>
+            <div>
+              <h2>Test connection</h2>
+              <p>Runs server-side checks without displaying tokens or credentials.</p>
+            </div>
+          </div>
+          <div class="test-actions">
+            <button type="button" class="btn btn-secondary" data-test-target="telegram" onclick="testConnection('telegram')">Telegram</button>
+            <button type="button" class="btn btn-secondary" data-test-target="gemini" onclick="testConnection('gemini')">Gemini</button>
+            <button type="button" class="btn btn-secondary" data-test-target="sheets" onclick="testConnection('sheets')">Sheets</button>
+            <button type="button" class="btn btn-secondary" data-test-target="drive" onclick="testConnection('drive')">Drive</button>
+            <button type="button" class="btn btn-primary" data-test-target="all" onclick="testConnection('all')">All</button>
+          </div>
+          <div class="connection-result" id="connectionResult" aria-live="polite">
+            No connection test run yet.
+          </div>
+        </section>
+
+        <form id="settingsForm" onsubmit="saveSettings(event)">
+          <!-- Telegram Section -->
+          <div class="settings-section">
+            <div class="section-header">
+              <span class="section-icon">💬</span>
+              <div>
+                <h2>Telegram Bot</h2>
+                <p>ขอ Token จาก <a href="https://t.me/botfather" target="_blank">@BotFather</a></p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="telegramToken">Bot Token</label>
+              <div class="input-wrapper">
+                <input type="password" id="telegramToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off">
+                <button type="button" class="btn-toggle-vis" onclick="togglePassword('telegramToken')">👁️</button>
+              </div>
+              <p class="field-help" id="telegramTokenHelp"></p>
+            </div>
+          </div>
+
+          <!-- Gemini Section -->
+          <div class="settings-section">
+            <div class="section-header">
+              <span class="section-icon">🧠</span>
+              <div>
+                <h2>Gemini AI</h2>
+                <p>ขอ API Key จาก <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a></p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="geminiKey">API Key</label>
+              <div class="input-wrapper">
+                <input type="password" id="geminiKey" placeholder="AIzaSy..." autocomplete="off">
+                <button type="button" class="btn-toggle-vis" onclick="togglePassword('geminiKey')">👁️</button>
+              </div>
+              <p class="field-help" id="geminiKeyHelp"></p>
+            </div>
+          </div>
+
+          <!-- OCR Providers + Fallback Section -->
+          <div class="settings-section">
+            <div class="section-header">
+              <span class="section-icon">🤖</span>
+              <div>
+                <h2>OCR Providers &amp; Fallback</h2>
+                <p>โมเดลหลักจับยอด ถ้าไม่ครบจะลองตัวสำรองตามลำดับ → ผลจากตัวสำรองจะเข้า "คิวรอตรวจ"</p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="openaiKey">OpenAI API Key (GPT) <span style="color:var(--text-muted)">— ไม่บังคับ</span></label>
+              <div class="input-wrapper">
+                <input type="password" id="openaiKey" placeholder="sk-..." autocomplete="off">
+                <button type="button" class="btn-toggle-vis" onclick="togglePassword('openaiKey')">👁️</button>
+              </div>
+              <p class="field-help">ขอจาก <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a></p>
+            </div>
+            <div class="form-group">
+              <label for="typhoonKey">Typhoon API Key <span style="color:var(--text-muted)">— ไม่บังคับ</span></label>
+              <div class="input-wrapper">
+                <input type="password" id="typhoonKey" placeholder="sk-..." autocomplete="off">
+                <button type="button" class="btn-toggle-vis" onclick="togglePassword('typhoonKey')">👁️</button>
+              </div>
+              <p class="field-help">ขอจาก <a href="https://playground.opentyphoon.ai/" target="_blank">opentyphoon.ai</a> (เชี่ยวชาญสลิปไทย)</p>
+            </div>
+            <div class="form-group">
+              <label for="ocrModel">โมเดลหลัก (Primary)</label>
+              <select id="ocrModel" class="input-wrapper"></select>
+            </div>
+            <div class="form-group">
+              <label for="ocrFallback1">สำรองตัวที่ 1</label>
+              <select id="ocrFallback1" class="input-wrapper"></select>
+            </div>
+            <div class="form-group">
+              <label for="ocrFallback2">สำรองตัวที่ 2</label>
+              <select id="ocrFallback2" class="input-wrapper"></select>
+            </div>
+            <p class="field-help">💡 แนะนำ: Gemini (หลัก) → Typhoon → GPT — ตามผลทดสอบความแม่นยำ</p>
+            <div class="form-group" style="margin-top:8px;">
+              <button type="button" class="btn btn-primary" onclick="saveOcrSettings()">💾 บันทึกโมเดล &amp; ใช้ทันที</button>
+              <span id="ocrSaveStatus" class="field-help" style="margin-left:10px;"></span>
+            </div>
+          </div>
+
+          <!-- Google Section -->
+          <div class="settings-section">
+            <div class="section-header">
+              <span class="section-icon">☁️</span>
+              <div>
+                <h2>Google Cloud (Sheets + Drive)</h2>
+                <p>อัปโหลดไฟล์ credentials.json จาก <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a></p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Credentials File</label>
+              <div class="file-upload-area" id="credDropZone">
+                <input type="file" id="credFile" accept=".json" onchange="handleCredFile(this)">
+                <div class="file-upload-content" id="credStatus">
+                  <span class="upload-icon">📤</span>
+                  <p>ลาก credentials.json มาวางตรงนี้ หรือคลิกเพื่อเลือกไฟล์</p>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="spreadsheetId">Spreadsheet ID (ไม่บังคับ — ถ้าไม่ใส่ บอทจะสร้างใหม่ให้เอง)</label>
+              <input type="text" id="spreadsheetId" placeholder="ปล่อยว่างได้ หรือใส่ ID ของ Spreadsheet ที่มีอยู่แล้ว">
+            </div>
+          </div>
+
+          <!-- Optional Section -->
+          <div class="settings-section">
+            <div class="section-header">
+              <span class="section-icon">⏰</span>
+              <div>
+                <h2>สรุปยอดรายวัน (ไม่บังคับ)</h2>
+                <p>ตั้งค่าให้บอทส่งสรุปยอดอัตโนมัติทุกวัน</p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Telegram Chat ID (สำหรับรับสรุปรายวันอัตโนมัติ)</label>
+              <input type="text" id="summaryChatId" placeholder="เช่น 123456789">
+            </div>
+            
+            <div class="form-group" style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px;">
+              <h3 style="font-size: 14px; margin-bottom: 12px; color: var(--accent);">🔐 ตั้งค่าความปลอดภัย</h3>
+              <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">💡 แนะนำหมุน (rotate) API key ทุก ~90 วัน โดยเฉพาะถ้าเคยส่งคีย์ผ่านแชต • หน้านี้มีระบบกัน brute-force (ผิด 8 ครั้ง = บล็อก 15 นาที)</p>
+
+              <label>Dashboard Username</label>
+              <input type="text" id="dashUser" placeholder="admin" style="margin-bottom: 12px;">
+              
+              <label>Dashboard Password</label>
+              <div class="input-wrapper" style="margin-bottom: 12px;">
+                <input type="password" id="dashPass" placeholder="admin">
+                <button type="button" class="btn-toggle-vis" onclick="togglePassword('dashPass')">👁️</button>
+              </div>
+              <p class="field-help" id="dashPassHelp"></p>
+
+              <label>PIN เข้าโหมดแก้ไข (6 หลัก)</label>
+              <div class="input-wrapper" style="margin-bottom: 6px;">
+                <input type="password" id="dashPin" placeholder="กรอก 6 หลักเพื่อตั้ง/เปลี่ยน" inputmode="numeric" maxlength="6">
+                <button type="button" class="btn-toggle-vis" onclick="togglePassword('dashPin')">👁️</button>
+              </div>
+              <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">ผู้ที่กรอก PIN นี้ถูกต้องจะเข้าโหมดแก้ไขได้ทุกอย่าง • ปล่อยว่าง = ไม่เปลี่ยน</p>
+
+              <label>Allowed Chat IDs (คนที่ใช้งานบอทได้ คั่นด้วยลูกน้ำ)</label>
+              <input type="text" id="allowedChats" placeholder="เช่น 123456789, 987654321">
+              <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">เว้นว่างไว้หากต้องการให้ทุกคนใช้งานได้</p>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-lg">
+              <span class="btn-icon">💾</span> บันทึกการตั้งค่า
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Logs Tab -->
+      <section class="tab-content" id="tab-logs">
+        <div class="page-header">
+          <h1>📋 Logs</h1>
+          <p class="subtitle">บันทึกการทำงานของระบบ</p>
+          <button class="btn btn-sm" onclick="clearLogs()">🗑️ ล้าง</button>
+        </div>
+        <div class="log-container" id="logContainer">
+          <div class="log-entry info">เริ่มต้นระบบ...</div>
+        </div>
+
+        <h2 style="margin:22px 0 10px; font-size:16px;">🛡️ Audit Log <small style="color:var(--text-muted);font-weight:400;">(ใครทำอะไร: ยืนยันคิว / แก้ตั้งค่า / ล้างข้อมูล)</small></h2>
+        <div id="auditContainer" class="audit-list"><div class="prov-empty">กำลังโหลด...</div></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/app.js?v=30"></script>
+</body>
+</html>
