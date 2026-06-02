@@ -700,6 +700,22 @@ function animateNumber(el, target, money) {
 }
 function setNumber(id, value, money) { animateNumber(document.getElementById(id), value, money); }
 
+// ── ย่อ/ขยาย sidebar (จำสถานะใน localStorage) ──
+function toggleSidebar() {
+  const app = document.querySelector('.app');
+  if (!app) return;
+  const collapsed = app.classList.toggle('sidebar-collapsed');
+  try { localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0'); } catch (_) {}
+}
+(function restoreSidebar() {
+  try {
+    if (localStorage.getItem('sidebarCollapsed') === '1') {
+      const app = document.querySelector('.app');
+      if (app) app.classList.add('sidebar-collapsed');
+    }
+  } catch (_) {}
+})();
+
 // ลูกเล่น ripple ตอนแตะปุ่ม/เมนู (เด้งวงคลื่นจากจุดที่กด)
 document.addEventListener('click', (e) => {
   const el = e.target.closest('.btn, .nav-item');
