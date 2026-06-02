@@ -46,6 +46,26 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// ลบ job ที่จบแล้ว (terminal) และเก่ากว่า keepDays — แต่เก็บล่าสุด keepRecent ตัวเสมอ
+// ไม่แตะงานที่ยังค้าง (recoverable) เด็ดขาด → กัน slip_jobs.json โตไม่หยุด
+function pruneOldJobs({ keepDays = 14, keepRecent = 150 } = {}) {
+  const store = readStore();
+  const jobs = store.jobs || [];
+  if (jobs.length <= keepRecent) return 0;
+  const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000;
+  const sorted = [...jobs].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  const keepIds = new Set(sorted.slice(0, keepRecent).map(j => j.id));
+  const kept = jobs.filter(j => {
+    if (keepIds.has(j.id)) return true;                       // เก็บล่าสุดเสมอ
+    if (RECOVERABLE_STATUSES.has(j.status)) return true;      // งานค้าง = ห้ามลบ
+    const t = Date.parse(j.finishedAt || j.updatedAt || j.createdAt || '') || 0;
+    return !(t && t < cutoff);                                // ลบ terminal ที่เก่ากว่า cutoff
+  });
+  const removed = jobs.length - kept.length;
+  if (removed > 0) writeStore({ jobs: kept });
+  return removed;
+}
+
 function createSlipJob(input) {
   const store = readStore();
   const job = {
@@ -210,6 +230,7 @@ module.exports = {
   markFailed,
   resetFailedJob,
   clearAll,
+  pruneOldJobs,
   acquireLease,
   renewLease,
   releaseLease,

@@ -109,6 +109,17 @@ async function runHealthCheck(bot, authClient, getSpreadsheetId) {
   }
 }
 
+// ซิงค์ SQLite mirror ให้ครบจากชีต (กันข้อมูลในตัวสำรองหายไม่ครบ) — คืนจำนวนที่ซิงค์
+async function reconcileMirror(authClient, spreadsheetId) {
+  const { listTransactions } = require('./sheets');
+  const { mirrorMany, localDbStats } = require('./localdb');
+  const rows = await listTransactions(authClient, spreadsheetId, { limit: 100000 });
+  const n = mirrorMany(rows);
+  const s = localDbStats();
+  console.log(`🔄 SQLite mirror ซิงค์ ${n} รายการ (ตอนนี้มี ${s.count} รายการ)`);
+  return n;
+}
+
 function setupScheduler(bot, authClient, getSpreadsheetId) {
   const scheduleTime = process.env.SUMMARY_TIME || '59 23 * * *';
 
@@ -118,6 +129,10 @@ function setupScheduler(bot, authClient, getSpreadsheetId) {
     if (!spreadsheetId) return;
     try { await runDailyBackup(authClient, spreadsheetId); }
     catch (e) { console.error('❌ Daily backup error:', e.message); }
+    try { await reconcileMirror(authClient, spreadsheetId); }
+    catch (e) { console.error('❌ Mirror reconcile error:', e.message); }
+    try { const n = require('./persistent_queue').pruneOldJobs({ keepDays: 14, keepRecent: 150 }); if (n > 0) console.log(`🧹 ลบ job เก่า ${n} รายการ`); }
+    catch (e) { console.error('❌ Job prune error:', e.message); }
   });
   console.log('💾 Daily backup scheduled at: 00:30');
 
@@ -157,4 +172,4 @@ function setupScheduler(bot, authClient, getSpreadsheetId) {
   if (t.unref) t.unref();
 }
 
-module.exports = { setupScheduler, runHealthCheck };
+module.exports = { setupScheduler, runHealthCheck, reconcileMirror };

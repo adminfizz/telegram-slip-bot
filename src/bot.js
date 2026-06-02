@@ -38,6 +38,7 @@ const {
   renewLease,
   releaseLease,
   clearAll: clearAllJobs,
+  pruneOldJobs,
 } = require('./persistent_queue');
 
 const reportCommand = require('./commands/report');
@@ -421,6 +422,8 @@ async function enqueueSlipJob(bot, authClient, jobId, options = {}) {
 }
 
 async function recoverPendingJobs(bot, authClient) {
+  // ลบ job เก่าที่จบแล้วตอนบูต (กัน slip_jobs.json โตไม่หยุด — ไม่แตะงานค้าง)
+  try { const n = pruneOldJobs({ keepDays: 14, keepRecent: 150 }); if (n > 0) console.log(`[Recovery] ลบ job เก่า ${n} รายการ`); } catch (_) {}
   const jobs = listRecoverableJobs({ includeLeased: true });
   if (jobs.length === 0) return;
   console.log(`[Recovery] Re-queueing ${jobs.length} persisted slip job(s).`);
@@ -526,12 +529,15 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
   const dateWarn = (hasLast4 && parsedData && parsedData.date)
     ? slipDateWarning(parsedData.date, job.createdAt, maxAgeDays)
     : null;
+  // ยอดเงินอ่านไม่ได้/≤0 = ถือว่าจับไม่ครบ ต้องตรวจก่อน
+  const badAmount = hasLast4 && !(Number(parsedData.amount) > 0);
 
-  // ── เข้าคิว "รอตรวจ" เมื่อ: ใช้ตัวสำรอง (review) หรือจับไม่ครบ (manual) หรือวันที่น่าสงสัย — ไม่บันทึกชีตทันที ──
+  // ── เข้าคิว "รอตรวจ" เมื่อ: ใช้ตัวสำรอง (review) / จับไม่ครบ (manual) / วันที่น่าสงสัย / ยอดผิด — ไม่บันทึกชีตทันที ──
   // (งานเก่าที่ค้างคิวจากก่อนอัปเดตจะมี ocrStatus = undefined → ถือว่า auto ถ้ามีเลขบัญชี เพื่อความเข้ากันได้ย้อนหลัง)
-  if ((ocrStatus && ocrStatus !== 'auto') || !hasLast4 || dateWarn) {
-    const isManual = ocrStatus === 'manual' || !hasLast4;
+  if ((ocrStatus && ocrStatus !== 'auto') || !hasLast4 || dateWarn || badAmount) {
+    const isManual = ocrStatus === 'manual' || !hasLast4 || badAmount;
     if (dateWarn) console.log(`[date-guard] ${jobId}: ${dateWarn}`);
+    if (badAmount) console.log(`[amount-guard] ${jobId}: ยอดเงินอ่านไม่ได้/≤0`);
     // อัปโหลดรูปขึ้น Drive ก่อน (best-effort) เพื่อให้หน้าเว็บรอตรวจมีรูปให้ดู
     let driveLink = job.driveLink || null;
     if (!driveLink) {

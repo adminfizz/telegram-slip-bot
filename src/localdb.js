@@ -45,6 +45,22 @@ function mirrorSlip(d) {
   } catch (e) { console.error('localdb mirror failed:', e.message); }
 }
 
+// บันทึกหลายรายการรวดเดียว (ใช้ backfill/reconcile จากชีต) — คืนจำนวนที่เขียน
+function mirrorMany(rows) {
+  const conn = getDb();
+  if (!conn || !Array.isArray(rows)) return 0;
+  let n = 0;
+  try {
+    conn.exec('BEGIN');
+    for (const d of rows) { if (d && d.hash) { mirrorSlip(d); n++; } }
+    conn.exec('COMMIT');
+  } catch (e) {
+    try { conn.exec('ROLLBACK'); } catch (_) {}
+    console.error('localdb mirrorMany failed:', e.message);
+  }
+  return n;
+}
+
 function clearLocalDb() {
   const conn = getDb();
   if (!conn) return;
@@ -60,4 +76,4 @@ function localDbStats() {
   } catch (e) { return { available: false, count: 0, total: 0 }; }
 }
 
-module.exports = { mirrorSlip, clearLocalDb, localDbStats, getDb };
+module.exports = { mirrorSlip, mirrorMany, clearLocalDb, localDbStats, getDb };

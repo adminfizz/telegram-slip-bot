@@ -30,17 +30,27 @@ const SETTINGS_KEYS = [
 ];
 const MASK_VALUE = '********';
 
+const LOG_MAX_BYTES = 2 * 1024 * 1024; // 2MB ต่อไฟล์ (เก็บสำรอง 1 รุ่น → รวมไม่เกิน ~4MB)
+let _logWriteCount = 0;
+function rotateLogIfNeeded() {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return;
+    if (fs.statSync(LOG_FILE).size < LOG_MAX_BYTES) return;
+    fs.renameSync(LOG_FILE, LOG_FILE + '.1'); // ทับรุ่นเก่า เริ่มไฟล์ใหม่
+  } catch (_) {}
+}
 let logBuffer = [];
 function pushLog(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString('th-TH');
   const logEntry = `[${timestamp}] ${message}`;
-  
+
   // Keep in memory for dashboard
   logBuffer.push({ time: Date.now(), message, type });
   if (logBuffer.length > 200) logBuffer.shift();
 
-  // Write to file for persistence
+  // Write to file for persistence (หมุนไฟล์เมื่อใหญ่เกิน — เช็คทุก 100 บรรทัด)
   try {
+    if ((++_logWriteCount % 100) === 0) rotateLogIfNeeded();
     fs.appendFileSync(LOG_FILE, `${logEntry}\n`);
   } catch (err) {}
 }
@@ -1462,6 +1472,7 @@ pin.focus();
       }
       await getOrCreateAccountTab(ctx.authClient, ctx.spreadsheetId, last4, finalData.bank);
       await appendSlip(ctx.authClient, ctx.spreadsheetId, last4, finalData);
+      try { require('../localdb').mirrorSlip(finalData); } catch (_) {} // sync ลง SQLite ด้วย (กันรูรั่ว)
       await removeReviewItem(ctx.authClient, ctx.spreadsheetId, item.id);
       reportCache.clear();
       reviewCache = null; todayCache = null;
