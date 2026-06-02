@@ -679,6 +679,43 @@ function setText(id, value) {
   if (el) el.textContent = value;
 }
 
+// ตัวเลขวิ่งขึ้น (count-up) — วิ่งจากค่าเดิม→ค่าใหม่เฉพาะตอนค่าเปลี่ยน (กันวิ่งซ้ำทุก poll)
+function animateNumber(el, target, money) {
+  if (!el) return;
+  target = Number(target) || 0;
+  const prev = el.dataset.val != null ? Number(el.dataset.val) : 0;
+  const fmt = (v) => money ? fmtMoney(v) : fmtNum(Math.round(v));
+  if (prev === target) { el.textContent = fmt(target); el.dataset.val = target; return; }
+  el.dataset.val = target;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) { el.textContent = fmt(target); return; }
+  const dur = 850, start = performance.now(), from = prev;
+  const ease = (t) => 1 - Math.pow(1 - t, 3); // easeOutCubic
+  function frame(now) {
+    const t = Math.min((now - start) / dur, 1);
+    el.textContent = fmt(from + (target - from) * ease(t));
+    if (t < 1) requestAnimationFrame(frame); else el.textContent = fmt(target);
+  }
+  requestAnimationFrame(frame);
+}
+function setNumber(id, value, money) { animateNumber(document.getElementById(id), value, money); }
+
+// ลูกเล่น ripple ตอนแตะปุ่ม/เมนู (เด้งวงคลื่นจากจุดที่กด)
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('.btn, .nav-item');
+  if (!el) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const rect = el.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height);
+  const r = document.createElement('span');
+  r.className = 'ripple';
+  r.style.width = r.style.height = size + 'px';
+  r.style.left = (e.clientX - rect.left - size / 2) + 'px';
+  r.style.top = (e.clientY - rect.top - size / 2) + 'px';
+  el.appendChild(r);
+  setTimeout(() => r.remove(), 650);
+});
+
 function formatAge(ms) {
   if (ms === null || ms === undefined || ms < 0) return '';
   const seconds = Math.round(ms / 1000);
@@ -819,19 +856,19 @@ async function loadToday() {
     const d = await res.json();
     if (!d.ok || !d.today) return;
     const t = d.today;
-    setText('todayTotal', fmtMoney(t.total));
-    setText('todayCount', fmtNum(t.count));
-    setText('todayTransfer', fmtMoney(t.transfer));
-    setText('todayWithdraw', fmtMoney(t.withdraw));
-    setText('todayFee', fmtMoney(t.fee));
+    setNumber('todayTotal', t.total, true);
+    setNumber('todayCount', t.count, false);
+    setNumber('todayTransfer', t.transfer, true);
+    setNumber('todayWithdraw', t.withdraw, true);
+    setNumber('todayFee', t.fee, true);
     setText('todayUpdated', d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString('th-TH') : '');
     if (d.month) {
       const m = d.month;
-      setText('monthTotal', fmtMoney(m.total));
-      setText('monthCount', fmtNum(m.count));
-      setText('monthTransfer', fmtMoney(m.transfer));
-      setText('monthWithdraw', fmtMoney(m.withdraw));
-      setText('monthFee', fmtMoney(m.fee));
+      setNumber('monthTotal', m.total, true);
+      setNumber('monthCount', m.count, false);
+      setNumber('monthTransfer', m.transfer, true);
+      setNumber('monthWithdraw', m.withdraw, true);
+      setNumber('monthFee', m.fee, true);
       setText('monthLabel', d.monthLabel || '');
     }
     lastTodayData = d;
