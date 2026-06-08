@@ -1373,6 +1373,16 @@ pin.focus();
     } catch (e) { res.json({ ok: false, error: e.message, items: [] }); }
   });
 
+  // รีเช็ครายวัน (รูปส่ง vs บันทึก) — อ่านจากชีต _reconcile (โชว์ได้ทั้ง local + Vercel)
+  app.get('/api/reconcile', async (req, res) => {
+    try {
+      const ctx = await ensureGoogleContext();
+      const { getReconcileLog } = require('../sheets');
+      const items = await getReconcileLog(ctx.authClient, ctx.spreadsheetId);
+      res.json({ ok: true, items: items.slice(0, 30) });
+    } catch (e) { res.json({ ok: false, error: e.message, items: [] }); }
+  });
+
   app.get('/api/jobs', async (req, res) => {
     try {
       const status = String(req.query.status || '').trim();

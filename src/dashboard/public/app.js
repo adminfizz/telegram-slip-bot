@@ -243,6 +243,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     }
     if (tabId === 'logs') {
       loadAudit();
+      loadReconcile();
     }
     if (tabId === 'transactions') {
       loadTransactions();
@@ -435,6 +436,33 @@ async function loadAudit() {
         <span class="audit-detail">${escHtml(a.detail || '')}</span>
         <span class="audit-meta">${escHtml(a.user || '-')} · ${a.at ? new Date(a.at).toLocaleString('th-TH') : ''}</span>
       </div>`).join('');
+  } catch (_) { box.innerHTML = '<div class="prov-empty">โหลดไม่สำเร็จ</div>'; }
+}
+
+// รีเช็ครายวัน (รูปที่ส่ง vs บันทึก) — แสดงในแท็บ Log
+async function loadReconcile() {
+  const box = document.getElementById('reconcileContainer');
+  if (!box) return;
+  try {
+    const res = await fetch('/api/reconcile', { cache: 'no-store' });
+    const d = await res.json();
+    const items = (d.ok && d.items) || [];
+    if (items.length === 0) { box.innerHTML = '<div class="prov-empty">ยังไม่มีผลรีเช็ค (ระบบจะตรวจอัตโนมัติทุกวัน 23:55)</div>'; return; }
+    box.innerHTML = items.map(r => {
+      const ok = r.matched;
+      const badge = ok ? '<span class="rec-badge ok">✔️ ตรงกัน</span>' : `<span class="rec-badge warn">⚠️ ไม่ตรง (เหลือ ${r.leftover})</span>`;
+      return `<div class="rec-row ${ok ? '' : 'rec-warn'}">
+        <div class="rec-head"><strong>${escHtml(r.date)}</strong> ${badge}</div>
+        <div class="rec-stats">
+          <span>📥 ส่งเข้า <b>${r.received}</b></span>
+          <span>✅ บันทึก <b>${r.done}</b></span>
+          <span>🟡 รอตรวจ <b>${r.review}</b></span>
+          <span>♻️ ซ้ำ <b>${r.duplicate}</b></span>
+          <span>❌ ล้มเหลว <b>${r.failed}</b></span>
+          ${r.pending ? `<span>⏳ ค้าง <b>${r.pending}</b></span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
   } catch (_) { box.innerHTML = '<div class="prov-empty">โหลดไม่สำเร็จ</div>'; }
 }
 

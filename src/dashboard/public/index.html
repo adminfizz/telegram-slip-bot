@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=41" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=42" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=41">
+  <link rel="stylesheet" href="/style.css?v=42">
 </head>
 <body>
   <!-- Loading screen -->
@@ -611,6 +611,9 @@
           <div class="log-entry info">เริ่มต้นระบบ...</div>
         </div>
 
+        <h2 style="margin:22px 0 10px; font-size:16px;">📊 รีเช็ครายวัน <small style="color:var(--text-muted);font-weight:400;">(รูปที่ส่ง vs บันทึกลงชีต · ตรวจอัตโนมัติทุก 23:55)</small></h2>
+        <div id="reconcileContainer" class="audit-list"><div class="prov-empty">กำลังโหลด...</div></div>
+
         <h2 style="margin:22px 0 10px; font-size:16px;">🛡️ Audit Log <small style="color:var(--text-muted);font-weight:400;">(ใครทำอะไร: ยืนยันคิว / แก้ตั้งค่า / ล้างข้อมูล)</small></h2>
         <div id="auditContainer" class="audit-list"><div class="prov-empty">กำลังโหลด...</div></div>
       </section>
@@ -621,6 +624,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=41"></script>
+  <script src="/app.js?v=42"></script>
 </body>
 </html>

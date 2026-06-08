@@ -120,6 +120,62 @@ async function reconcileMirror(authClient, spreadsheetId) {
   return n;
 }
 
+// รีเช็ครายวัน: รูปที่ส่งเข้า Telegram วันนี้ (= จำนวน job) vs รูปที่ผ่าน OCR/บันทึกแล้ว — ตรงกันไหม
+async function runDailyReconcile(bot, authClient, getSpreadsheetId) {
+  const { listJobs } = require('./persistent_queue');
+  const { getTodayStr, appendReconcile } = require('./sheets');
+  const spreadsheetId = getSpreadsheetId();
+  const today = getTodayStr();
+
+  // นับ job ที่ "สร้างวันนี้" (= รูปที่ส่งเข้ามาวันนี้) แยกตามสถานะ
+  const todayJobs = listJobs().filter(j => {
+    try { return getTodayStr(new Date(j.createdAt)) === today; } catch (_) { return false; }
+  });
+  const recoverable = new Set(['queued', 'processing', 'download', 'duplicate_check', 'ocr', 'ocr_retry', 'upload_drive', 'save_sheet']);
+  let done = 0, review = 0, duplicate = 0, failed = 0, pending = 0;
+  todayJobs.forEach(j => {
+    if (j.status === 'done') done++;
+    else if (j.status === 'review') review++;
+    else if (j.status === 'duplicate') duplicate++;
+    else if (j.status === 'failed' || j.status === 'error') failed++;
+    else if (recoverable.has(j.status)) pending++;
+    else done++; // เผื่อสถานะ done อื่นๆ
+  });
+  const received = todayJobs.length;
+  const passedOcr = done + review + duplicate;            // ผ่าน OCR ได้ข้อมูล (รวมที่รอตรวจ/ซ้ำ)
+  const accountedInSheet = done + duplicate;              // จบลงชีตแล้ว (บันทึก/ข้ามซ้ำ)
+  const matched = (received === accountedInSheet) && review === 0 && failed === 0 && pending === 0;
+  const leftover = received - accountedInSheet;           // ยังไม่จบลงชีต (รอตรวจ/ล้มเหลว/ค้าง)
+
+  const record = { date: today, received, done, review, duplicate, failed, pending, passedOcr, matched, leftover };
+
+  const summary = [
+    `📊 รีเช็ครายวัน ${today} (23:55)`,
+    `📥 รูปที่ส่งเข้า Telegram วันนี้: ${received}`,
+    `✅ ผ่าน OCR + บันทึกลงชีต: ${done}`,
+    `🟡 รอตรวจ (OCR ไม่ครบ/สำรอง): ${review}`,
+    `♻️ ซ้ำ (ข้าม): ${duplicate}`,
+    `❌ ล้มเหลว: ${failed}`,
+    `⏳ ค้าง/กำลังทำ: ${pending}`,
+    matched
+      ? `✔️ ผลตรวจ: ตรงกัน — ทุกรูปจบลงชีตครบ`
+      : `⚠️ ผลตรวจ: ไม่ตรง — มี ${leftover} รูปยังไม่ลงชีต (รอตรวจ ${review} / ล้มเหลว ${failed} / ค้าง ${pending})`,
+  ].join('\n');
+
+  // 1) log → โผล่ในแท็บ Log ของ dashboard local (logBuffer)
+  console.log(summary);
+  // 2) เก็บลงชีต → dashboard บน Vercel อ่านได้เหมือนกัน
+  if (spreadsheetId) {
+    try { await appendReconcile(authClient, spreadsheetId, record); } catch (e) { console.error('appendReconcile error:', e.message); }
+  }
+  // 3) แจ้ง Telegram เฉพาะตอน "ไม่ตรง" (กัน spam)
+  const chatId = process.env.SUMMARY_CHAT_ID;
+  if (bot && chatId && !matched) {
+    try { await bot.sendMessage(chatId, summary); } catch (_) {}
+  }
+  return record;
+}
+
 function setupScheduler(bot, authClient, getSpreadsheetId) {
   const scheduleTime = process.env.SUMMARY_TIME || '59 23 * * *';
 
@@ -167,9 +223,14 @@ function setupScheduler(bot, authClient, getSpreadsheetId) {
   const healthCron = process.env.HEALTH_CHECK_CRON || '*/15 * * * *';
   cron.schedule(healthCron, () => { runHealthCheck(bot, authClient, getSpreadsheetId).catch(() => {}); });
   console.log(`🩺 Health watchdog scheduled: ${healthCron}`);
+
+  // รีเช็ครายวัน 23:55 — เทียบรูปที่ส่ง vs ที่บันทึก แล้วเก็บผล (โชว์ในแท็บ Log)
+  const reconcileTime = process.env.RECONCILE_TIME || '55 23 * * *';
+  cron.schedule(reconcileTime, () => { runDailyReconcile(bot, authClient, getSpreadsheetId).catch(e => console.error('reconcile error:', e.message)); });
+  console.log(`📊 Daily reconcile scheduled at: ${reconcileTime}`);
   // เช็คครั้งแรกหลังบูต ~60 วิ (ให้ระบบตั้งตัวก่อน)
   const t = setTimeout(() => { runHealthCheck(bot, authClient, getSpreadsheetId).catch(() => {}); }, 60000);
   if (t.unref) t.unref();
 }
 
-module.exports = { setupScheduler, runHealthCheck, reconcileMirror };
+module.exports = { setupScheduler, runHealthCheck, reconcileMirror, runDailyReconcile };

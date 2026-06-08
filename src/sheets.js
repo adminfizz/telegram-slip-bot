@@ -82,6 +82,8 @@ const JOBS_TAB_NAME = '_jobs';
 const REVIEW_TAB_NAME = '_review';
 const CONFIG_TAB_NAME = '_config';
 const AUDIT_TAB_NAME = '_audit';
+const RECONCILE_TAB_NAME = '_reconcile';
+const reconcileTabReady = new Set();
 const auditTabReady = new Set();
 const configTabReady = new Set();
 const reviewTabReady = new Set();
@@ -102,7 +104,7 @@ function isAccountTab(tabName) {
 
 function isSystemTab(tabName) {
   const t = String(tabName || '');
-  return t === SYSTEM_TAB_NAME || t === JOBS_TAB_NAME || t === REVIEW_TAB_NAME || t === CONFIG_TAB_NAME || t === AUDIT_TAB_NAME;
+  return t === SYSTEM_TAB_NAME || t === JOBS_TAB_NAME || t === REVIEW_TAB_NAME || t === CONFIG_TAB_NAME || t === AUDIT_TAB_NAME || t === RECONCILE_TAB_NAME;
 }
 
 function getAccountTabNamesFromMeta(meta) {
@@ -292,6 +294,37 @@ async function appendAudit(auth, spreadsheetId, entry) {
     const trimmed = arr.slice(0, 300);
     await sheets.spreadsheets.values.update({ spreadsheetId, range: `${AUDIT_TAB_NAME}!A1`, valueInputOption: 'RAW', resource: { values: [[JSON.stringify(trimmed)]] } });
   } catch (e) { console.error('appendAudit failed:', e.message); }
+}
+
+// ─── Daily reconcile log (รูปที่ส่ง vs ผ่าน OCR/บันทึก) — JSON array ใน _reconcile!A1 (เก็บ 90 วันล่าสุด) ──
+async function ensureReconcileTab(sheets, spreadsheetId) {
+  if (reconcileTabReady.has(spreadsheetId)) return;
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  if (!meta.data.sheets.find(s => s.properties.title === RECONCILE_TAB_NAME)) {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: RECONCILE_TAB_NAME, hidden: true } } }] } });
+  }
+  reconcileTabReady.add(spreadsheetId);
+}
+async function getReconcileLog(auth, spreadsheetId) {
+  const sheets = sheetsClient(auth);
+  try {
+    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${RECONCILE_TAB_NAME}!A1` });
+    const raw = r.data.values && r.data.values[0] && r.data.values[0][0];
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) { return []; }
+}
+async function appendReconcile(auth, spreadsheetId, record) {
+  const sheets = sheetsClient(auth);
+  try {
+    await ensureReconcileTab(sheets, spreadsheetId);
+    const arr = await getReconcileLog(auth, spreadsheetId);
+    // ถ้ามีของวันเดียวกันอยู่แล้ว ให้แทนที่ (กันซ้ำเมื่อรันหลายรอบ)
+    const filtered = arr.filter(x => x.date !== record.date);
+    filtered.unshift({ at: new Date().toISOString(), ...record });
+    const trimmed = filtered.slice(0, 90);
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${RECONCILE_TAB_NAME}!A1`, valueInputOption: 'RAW', resource: { values: [[JSON.stringify(trimmed)]] } });
+  } catch (e) { console.error('appendReconcile failed:', e.message); }
 }
 
 async function setTokenUsage(auth, spreadsheetId, totalTokens = 0, count = 0) {
@@ -1670,6 +1703,8 @@ module.exports = {
   wipeAllTabsData,
   syncSummaryTab,
   ensureAccountTotalCells,
+  getReconcileLog,
+  appendReconcile,
   formatAllTabs,
   getSystemState,
   updateSystemState,
