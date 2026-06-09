@@ -525,19 +525,23 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
 
   // ── ตรวจวันที่น่าสงสัย (อาจ OCR อ่านเดือน/วันผิด) เทียบกับเวลาที่รับสลิป (job.createdAt) ──
   // window ปรับได้ผ่าน env SLIP_DATE_MAX_AGE_DAYS (ดีฟอลต์ 14 วัน) — สลิปเก่ากว่านี้/อนาคต จะถูกส่งเข้าคิวรอตรวจ
-  const maxAgeDays = Number(process.env.SLIP_DATE_MAX_AGE_DAYS || 14);
+  // ผู้ใช้ส่งสลิป "วันต่อวัน" → วันที่ต่างจากวันรับเกิน N วัน (ดีฟอลต์ 1 = วันนี้/เมื่อวานผ่าน) ให้เข้ารอตรวจ
+  const maxAgeDays = Number(process.env.SLIP_DATE_MAX_AGE_DAYS || 1);
   const dateWarn = (hasLast4 && parsedData && parsedData.date)
     ? slipDateWarning(parsedData.date, job.createdAt, maxAgeDays)
     : null;
   // ยอดเงินอ่านไม่ได้/≤0 = ถือว่าจับไม่ครบ ต้องตรวจก่อน
   const badAmount = hasLast4 && !(Number(parsedData.amount) > 0);
+  // OCR บอกเองว่าไม่มั่นใจ (ตัวเลขจาง/เบลอ) → รอตรวจ
+  const uncertain = hasLast4 && parsedData && parsedData.uncertain === true;
 
-  // ── เข้าคิว "รอตรวจ" เมื่อ: ใช้ตัวสำรอง (review) / จับไม่ครบ (manual) / วันที่น่าสงสัย / ยอดผิด — ไม่บันทึกชีตทันที ──
+  // ── เข้าคิว "รอตรวจ" เมื่อ: ใช้ตัวสำรอง / จับไม่ครบ / วันที่ต่างวัน / ยอดผิด / ไม่มั่นใจ — ไม่บันทึกชีตทันที ──
   // (งานเก่าที่ค้างคิวจากก่อนอัปเดตจะมี ocrStatus = undefined → ถือว่า auto ถ้ามีเลขบัญชี เพื่อความเข้ากันได้ย้อนหลัง)
-  if ((ocrStatus && ocrStatus !== 'auto') || !hasLast4 || dateWarn || badAmount) {
+  if ((ocrStatus && ocrStatus !== 'auto') || !hasLast4 || dateWarn || badAmount || uncertain) {
     const isManual = ocrStatus === 'manual' || !hasLast4 || badAmount;
     if (dateWarn) console.log(`[date-guard] ${jobId}: ${dateWarn}`);
     if (badAmount) console.log(`[amount-guard] ${jobId}: ยอดเงินอ่านไม่ได้/≤0`);
+    if (uncertain) console.log(`[confidence-guard] ${jobId}: OCR ไม่มั่นใจ (ตัวเลขจาง/เบลอ)`);
     // อัปโหลดรูปขึ้น Drive ก่อน (best-effort) เพื่อให้หน้าเว็บรอตรวจมีรูปให้ดู
     let driveLink = job.driveLink || null;
     if (!driveLink) {
@@ -565,7 +569,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
       driveLink: driveLink || '',
       ocrText: ocrText || '',
       provider: ocrProvider || '',
-      reason: dateWarn ? `วันที่น่าสงสัย — ${dateWarn}` : (isManual ? 'จับไม่ครบ — ต้องกรอกเอง' : 'ใช้ตัวสำรอง — รอยืนยัน'),
+      reason: dateWarn ? `วันที่น่าสงสัย — ${dateWarn}` : (uncertain ? 'OCR ไม่มั่นใจยอด/เลขบัญชี (จาง/เบลอ) — โปรดตรวจ' : (isManual ? 'จับไม่ครบ — ต้องกรอกเอง' : 'ใช้ตัวสำรอง — รอยืนยัน')),
       senderTG: job.senderTG || '-',
       fileHash,
     };
@@ -583,6 +587,12 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
           `🔢 บัญชี: ****${reviewItem.last4}  💰 ${Number(reviewItem.amount).toLocaleString('en-US')} บาท  📅 ${reviewItem.date}`,
           `❓ ${dateWarn}`,
           '📝 เข้าคิว "รอตรวจ" บนเว็บแล้ว — โปรดตรวจ/แก้วันที่ก่อนยืนยันบันทึก',
+        ].join('\n')
+      : uncertain
+      ? [
+          `🟠 งาน ${jobId}: OCR ไม่มั่นใจ (ตัวเลขจาง/เบลอ)`,
+          `🔢 บัญชี: ****${reviewItem.last4}  💰 ${Number(reviewItem.amount).toLocaleString('en-US')} บาท`,
+          '📝 เข้าคิว "รอตรวจ" บนเว็บแล้ว — โปรดตรวจยอด/เลขบัญชีก่อนยืนยัน',
         ].join('\n')
       : isManual
       ? [

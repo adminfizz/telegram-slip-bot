@@ -47,8 +47,9 @@ const SLIP_SCHEMA = {
     bank: { type: SchemaType.STRING, description: 'ชื่อย่อธนาคาร' },
     date: { type: SchemaType.STRING, description: 'วันเวลา รูปแบบ YYYY-MM-DD HH:mm' },
     slip_type: { type: SchemaType.STRING, description: '"digital" หรือ "atm"' },
+    uncertain: { type: SchemaType.BOOLEAN, description: 'true ถ้าตัวเลขยอดเงินหรือเลขบัญชี จาง/เบลอ/อ่านไม่ชัด ไม่มั่นใจว่าอ่านถูก' },
   },
-  required: ['account_last4', 'amount', 'fee', 'tx_type', 'bank', 'date', 'slip_type'],
+  required: ['account_last4', 'amount', 'fee', 'tx_type', 'bank', 'date', 'slip_type', 'uncertain'],
 };
 
 // เวอร์ชัน JSON Schema ปกติ (สำหรับ OpenAI structured outputs แบบ strict — บังคับ field เป๊ะเท่า Gemini)
@@ -65,8 +66,9 @@ const SLIP_JSON_SCHEMA = {
     bank: { type: 'string', description: 'ชื่อย่อธนาคาร' },
     date: { type: 'string', description: 'วันเวลา รูปแบบ YYYY-MM-DD HH:mm' },
     slip_type: { type: 'string', description: '"digital" หรือ "atm"' },
+    uncertain: { type: 'boolean', description: 'true ถ้าตัวเลขยอดเงินหรือเลขบัญชี จาง/เบลอ/อ่านไม่ชัด ไม่มั่นใจว่าอ่านถูก' },
   },
-  required: ['account_last4', 'amount', 'fee', 'tx_type', 'counterparty', 'recipient_last4', 'bank', 'date', 'slip_type'],
+  required: ['account_last4', 'amount', 'fee', 'tx_type', 'counterparty', 'recipient_last4', 'bank', 'date', 'slip_type', 'uncertain'],
 };
 
 function buildPrompt() {
@@ -82,6 +84,7 @@ function buildPrompt() {
     - bank: ชื่อย่อธนาคาร (เช่น SCB, KBANK, KTB, BBL)
     - date: วันเวลา รูปแบบ YYYY-MM-DD HH:mm
     - slip_type: "digital" หรือ "atm"
+    - uncertain: ใส่ true ถ้า "ตัวเลขยอดเงิน" หรือ "เลขบัญชี" บนสลิปจาง/เบลอ/พิมพ์ไม่ชัด จนไม่มั่นใจว่าอ่านถูก 100% (ถ้าชัดเจนให้ false)
 
     Date/year rules:
     - วันนี้ประมาณ ${today.date} (ปี ค.ศ. ${today.year}) วันที่บนสลิปควรใกล้เคียงวันนี้

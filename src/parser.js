@@ -118,6 +118,7 @@ function parseSlipData(jsonData) {
     const bank = jsonData.bank || '-';
     const date = normalizeSlipDate(jsonData.date);
     const slip_type = jsonData.slip_type || 'digital';
+    const uncertain = jsonData.uncertain === true || String(jsonData.uncertain).toLowerCase() === 'true';
 
     return {
       last4,
@@ -128,7 +129,8 @@ function parseSlipData(jsonData) {
       recipient_last4,
       bank,
       date,
-      slip_type
+      slip_type,
+      uncertain
     };
   } catch (error) {
     console.error('Error parsing slip data:', error);
@@ -151,8 +153,8 @@ function slipDateWarning(dateStr, refIso, maxAgeDays = 14) {
   const [ry, rm, rd] = bkk.split('-').map(Number);
   const refMidnight = new Date(ry, rm - 1, rd);
   const days = Math.round((refMidnight - slip) / 86400000); // บวก = อดีต, ลบ = อนาคต
-  if (days < -1) return `วันที่บนสลิปเป็นอนาคต (${m[0]}) — อาจอ่านวัน/เดือนผิด`;
-  if (days > maxAgeDays) return `วันที่บนสลิปเก่ากว่าวันรับ ${days} วัน (${m[0]}) — อาจอ่านเดือนผิด`;
+  if (days < 0) return `วันที่บนสลิปเป็นอนาคต (${m[0]}) — อาจอ่านวัน/เดือนผิด`;
+  if (days > maxAgeDays) return `วันที่ไม่ตรงวันรับ (สลิป ${m[0]}, เก่ากว่า ${days} วัน) — อาจอ่านวัน/เดือนผิด`;
   return null;
 }
 
