@@ -1433,8 +1433,10 @@ async function updateSlipByHash(auth, spreadsheetId, targetLast4, hash, fields =
     fields.recipient_last4 != null ? String(fields.recipient_last4).replace(/\D/g, '') : (cur[9] || ''),
     fields.note != null ? fields.note : (cur[10] || ''),
   ];
+  // RAW: ตัวเลข (amount/fee เป็น Number จาก numClean) → เก็บเป็นตัวเลข, วันที่ (string) → เก็บเป็นข้อความ
+  // (ห้ามใช้ USER_ENTERED — มันจะแปลง "2026-06-09 19:15" เป็นเลข serial ทำให้วันที่พัง)
   await sheets.spreadsheets.values.update({
-    spreadsheetId, range: `'${tabName}'!A${idx + 1}:K${idx + 1}`, valueInputOption: 'USER_ENTERED', resource: { values: [newRow] },
+    spreadsheetId, range: `'${tabName}'!A${idx + 1}:K${idx + 1}`, valueInputOption: 'RAW', resource: { values: [newRow] },
   });
   scheduleSummarySync(auth, spreadsheetId);
   return { ok: true };
