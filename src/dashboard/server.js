@@ -700,7 +700,7 @@ function createDashboard(port = 3000, options = {}) {
     if (isAuthDisabled()) { req.dashRole = 'admin'; req.dashUser = 'admin'; return next(); }
     const p = req.path;
     // เส้นทางที่เข้าได้โดยไม่ต้องล็อกอิน
-    if (p.startsWith('/oauth2callback') || p === '/login' || p === '/api/login' || p === '/api/logout' || p === '/favicon.svg' || p.startsWith('/api/public/')) return next();
+    if (p.startsWith('/oauth2callback') || p === '/login' || p === '/api/login' || p === '/api/logout' || p === '/favicon.svg' || p === '/v' || p.startsWith('/api/public/')) return next();
 
     const env = parseEnv();
     const raw = parseCookies(req).slip_session || '';
@@ -1264,8 +1264,15 @@ pin.focus();
     }
   });
 
+  // หน้าดูยอดสาธารณะแบบสวยงาม (ใส่ key เองในหน้า) — /v
+  app.get('/v', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(__dirname, 'public', 'view.html'));
+  });
+
   // ดึง "รายการ" (ลิสต์ธุรกรรม) สำหรับเว็บอื่น — มีรหัส key กันคนอื่นดึง (เพราะมีชื่อ/เลขบัญชี)
-  // ใช้: /api/public/transactions?key=XXX  (กรองได้ &date=YYYY-MM-DD &last4=1234 &limit=500)
+  // ใช้: /api/public/transactions?key=XXX  (ออปชัน: &date=YYYY-MM-DD &last4=1234 &limit=N &group=date)
+  // ดีฟอลต์คืน "ทั้งหมดทุกวัน"; group=date → จัดกลุ่มตามวัน แต่ละรายการมี เวลา/เลขท้าย/ยอด
   app.get('/api/public/transactions', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -1281,17 +1288,64 @@ pin.focus();
       const ctx = await ensureGoogleContext();
       const { listTransactions } = require('../sheets');
       const last4 = /^\d{2,6}$/.test(String(req.query.last4 || '')) ? req.query.last4 : null;
-      const limit = Math.max(1, Math.min(parseInt(req.query.limit || '500', 10) || 500, 2000));
-      // ดึงมาเยอะก่อน → กรองวันที่ → ค่อย limit (กัน limit ตัดก่อนกรองวันแล้วได้ 0)
-      let items = await listTransactions(ctx.authClient, ctx.spreadsheetId, { targetLast4: last4, limit: 5000 });
+      const limit = Math.max(1, Math.min(parseInt(req.query.limit || '10000', 10) || 10000, 10000)); // ดีฟอลต์ = ทั้งหมด
+      let items = await listTransactions(ctx.authClient, ctx.spreadsheetId, { targetLast4: last4, limit: 10000 });
       const date = String(req.query.date || '').slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(date)) items = items.filter(t => String(t.date || '').slice(0, 10) === date);
+      const month = String(req.query.month || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(month)) items = items.filter(t => String(t.date || '').slice(0, 7) === month);
       items = items.slice(0, limit);
-      const out = items.map(t => ({
-        date: t.date, last4: t.last4, amount: t.amount, fee: t.fee,
-        tx_type: t.tx_type, counterparty: t.counterparty, recipient_last4: t.recipient_last4,
-        bank: t.bank, note: t.note,
-      }));
+
+      // แยก วัน/เวลา จาก "YYYY-MM-DD HH:mm"
+      const split = (dt) => { const s = String(dt || ''); const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T]?(\d{2}:\d{2})?/); return { day: m ? m[1] : s.slice(0, 10), time: m && m[2] ? m[2] : '' }; };
+
+      // group=account → รวมแต่ละบัญชี (ยอดรวม + จำนวน + รายการ)
+      if (String(req.query.group) === 'account') {
+        const byAcc = {};
+        items.forEach(t => {
+          const acc = String(t.last4 || '-'); const { day, time } = split(t.date);
+          (byAcc[acc] = byAcc[acc] || []).push({ date: day, time, amount: Number(t.amount) || 0, tx_type: t.tx_type });
+        });
+        const accounts = Object.keys(byAcc).sort().map(acc => ({
+          last4: acc, count: byAcc[acc].length,
+          total: byAcc[acc].reduce((a, x) => a + x.amount, 0), items: byAcc[acc],
+        }));
+        return res.json({ ok: true, count: items.length, grandTotal: accounts.reduce((a, x) => a + x.total, 0), accounts, fetchedAt: new Date().toISOString() });
+      }
+
+      // group=date → จัดกลุ่ม วัน → บัญชี(เลขท้าย) → รายการ(เวลา/ยอด) เรียงวันใหม่→เก่า
+      if (String(req.query.group) === 'date') {
+        const byDate = {};
+        items.forEach(t => {
+          const { day, time } = split(t.date);
+          const acc = String(t.last4 || '-');
+          byDate[day] = byDate[day] || {};
+          (byDate[day][acc] = byDate[day][acc] || []).push({ time, amount: Number(t.amount) || 0 });
+        });
+        const days = Object.keys(byDate).sort().reverse().map(d => {
+          const accounts = Object.keys(byDate[d]).sort().map(acc => ({
+            last4: acc,
+            count: byDate[d][acc].length,
+            total: byDate[d][acc].reduce((a, x) => a + x.amount, 0),
+            items: byDate[d][acc],
+          }));
+          return {
+            date: d,
+            count: accounts.reduce((a, x) => a + x.count, 0),
+            total: accounts.reduce((a, x) => a + x.total, 0),
+            accounts,
+          };
+        });
+        return res.json({ ok: true, count: items.length, days, fetchedAt: new Date().toISOString() });
+      }
+
+      const out = items.map(t => {
+        const { day, time } = split(t.date);
+        return {
+          date: day, time, last4: t.last4, amount: Number(t.amount) || 0, fee: Number(t.fee) || 0,
+          tx_type: t.tx_type, counterparty: t.counterparty, recipient_last4: t.recipient_last4, bank: t.bank, note: t.note,
+        };
+      });
       res.json({ ok: true, count: out.length, items: out, fetchedAt: new Date().toISOString() });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
