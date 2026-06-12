@@ -550,6 +550,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
         const fileName = `review_${jobId}_${fileHash}.jpg`;
         driveLink = await retryOperation('Drive upload', 2, () => uploadSlip(authClient, downloadPath, fileName, {
           last4: hasLast4 ? parsedData.last4 : 'review', date: parsedData && parsedData.date,
+          amount: parsedData && parsedData.amount, hash: fileHash,
         }));
         updateJob(jobId, { driveLink });
       } catch (e) { console.error('review drive upload failed:', e.message); }
@@ -623,6 +624,8 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
     driveLink = await retryOperation('Drive upload', 2, () => uploadSlip(authClient, downloadPath, fileName, {
       last4: parsedData.last4,
       date: parsedData.date,
+      amount: parsedData.amount,
+      hash: fileHash,
     }));
     updateJob(jobId, { driveLink, step: 'drive_done' });
   }

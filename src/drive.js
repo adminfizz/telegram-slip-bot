@@ -59,6 +59,22 @@ function getBangkokDateParts(dateText = null) {
   return { year: p.year, month: p.month, day: p.day };
 }
 
+// ชื่อไฟล์สื่อความหมาย: "YYYY-MM-DD_HHMM_<บัญชี>_<ยอด>_<hash>.jpg" (ตรงกับวันเวลา/ยอดที่บันทึก)
+function buildSlipFileName(options = {}, fallback = '') {
+  const m = String(options.date || '').match(/^(\d{4}-\d{2}-\d{2})[ T]?(\d{2}):(\d{2})/);
+  const dp = getBangkokDateParts(options.date);
+  const day = m ? m[1] : `${dp.year}-${dp.month}-${dp.day}`;
+  const time = m ? `${m[2]}${m[3]}` : '0000';
+  const last4 = String(options.last4 || 'UNKNOWN');
+  const amount = (options.amount != null && Number(options.amount) > 0) ? String(Math.round(Number(options.amount))) : '';
+  const hash = String(options.hash || '');
+  let name = `${day}_${time}_${last4}`;
+  if (amount) name += `_${amount}`;
+  if (hash) name += `_${hash}`;
+  name = name.replace(/[\\/:*?"<>|\s]/g, '-');
+  return (name || String(fallback).replace(/\.jpg$/i, '') || 'slip') + '.jpg';
+}
+
 async function uploadSlip(auth, filePath, fileName, options = {}) {
   const drive = google.drive({ version: 'v3', auth });
 
@@ -67,6 +83,8 @@ async function uploadSlip(auth, filePath, fileName, options = {}) {
   const fullDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
   const yearMonth = `${dateParts.year}-${dateParts.month}`;
   const accountFolderName = `บัญชี_${options.last4 || 'UNKNOWN'}`;
+  // ใช้ชื่อสื่อความหมาย (ถ้า options มีข้อมูลพอ) ไม่งั้น fallback เป็นชื่อเดิม
+  const finalName = buildSlipFileName(options, fileName);
 
   try {
     const rootId = await getOrCreateFolder(drive, ROOT_FOLDER_NAME);
@@ -75,7 +93,7 @@ async function uploadSlip(auth, filePath, fileName, options = {}) {
     const accountId = await getOrCreateFolder(drive, accountFolderName, dayId);
 
     const fileMetadata = {
-      name: fileName,
+      name: finalName,
       parents: [accountId],
     };
     
@@ -106,4 +124,4 @@ async function uploadSlip(auth, filePath, fileName, options = {}) {
   }
 }
 
-module.exports = { uploadSlip, getBangkokDateParts, clearFolderCache };
+module.exports = { uploadSlip, buildSlipFileName, getBangkokDateParts, clearFolderCache };
