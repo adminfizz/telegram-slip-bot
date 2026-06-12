@@ -700,7 +700,7 @@ function createDashboard(port = 3000, options = {}) {
     if (isAuthDisabled()) { req.dashRole = 'admin'; req.dashUser = 'admin'; return next(); }
     const p = req.path;
     // เส้นทางที่เข้าได้โดยไม่ต้องล็อกอิน
-    if (p.startsWith('/oauth2callback') || p === '/login' || p === '/api/login' || p === '/api/logout' || p === '/favicon.svg' || p === '/api/public/summary') return next();
+    if (p.startsWith('/oauth2callback') || p === '/login' || p === '/api/login' || p === '/api/logout' || p === '/favicon.svg' || p.startsWith('/api/public/')) return next();
 
     const env = parseEnv();
     const raw = parseCookies(req).slip_session || '';
@@ -1262,6 +1262,36 @@ pin.focus();
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
+  });
+
+  // ดึง "รายการ" (ลิสต์ธุรกรรม) สำหรับเว็บอื่น — มีรหัส key กันคนอื่นดึง (เพราะมีชื่อ/เลขบัญชี)
+  // ใช้: /api/public/transactions?key=XXX  (กรองได้ &date=YYYY-MM-DD &last4=1234 &limit=500)
+  app.get('/api/public/transactions', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+
+    const key = req.query.key || req.headers['x-api-key'] || '';
+    const expected = process.env.PUBLIC_API_KEY || '';
+    if (!expected) return res.status(503).json({ ok: false, error: 'ยังไม่ได้ตั้ง PUBLIC_API_KEY บนเซิร์ฟเวอร์' });
+    if (key !== expected) return res.status(401).json({ ok: false, error: 'ต้องใส่ key ที่ถูกต้อง: ?key=...' });
+
+    try {
+      const ctx = await ensureGoogleContext();
+      const { listTransactions } = require('../sheets');
+      const last4 = /^\d{2,6}$/.test(String(req.query.last4 || '')) ? req.query.last4 : null;
+      const limit = Math.max(1, Math.min(parseInt(req.query.limit || '500', 10) || 500, 2000));
+      let items = await listTransactions(ctx.authClient, ctx.spreadsheetId, { targetLast4: last4, limit });
+      const date = String(req.query.date || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) items = items.filter(t => String(t.date || '').slice(0, 10) === date);
+      const out = items.map(t => ({
+        date: t.date, last4: t.last4, amount: t.amount, fee: t.fee,
+        tx_type: t.tx_type, counterparty: t.counterparty, recipient_last4: t.recipient_last4,
+        bank: t.bank, note: t.note,
+      }));
+      res.json({ ok: true, count: out.length, items: out, fetchedAt: new Date().toISOString() });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
   // แนวโน้มรายวัน
