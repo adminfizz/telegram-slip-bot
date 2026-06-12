@@ -1282,9 +1282,11 @@ pin.focus();
       const { listTransactions } = require('../sheets');
       const last4 = /^\d{2,6}$/.test(String(req.query.last4 || '')) ? req.query.last4 : null;
       const limit = Math.max(1, Math.min(parseInt(req.query.limit || '500', 10) || 500, 2000));
-      let items = await listTransactions(ctx.authClient, ctx.spreadsheetId, { targetLast4: last4, limit });
+      // ดึงมาเยอะก่อน → กรองวันที่ → ค่อย limit (กัน limit ตัดก่อนกรองวันแล้วได้ 0)
+      let items = await listTransactions(ctx.authClient, ctx.spreadsheetId, { targetLast4: last4, limit: 5000 });
       const date = String(req.query.date || '').slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(date)) items = items.filter(t => String(t.date || '').slice(0, 10) === date);
+      items = items.slice(0, limit);
       const out = items.map(t => ({
         date: t.date, last4: t.last4, amount: t.amount, fee: t.fee,
         tx_type: t.tx_type, counterparty: t.counterparty, recipient_last4: t.recipient_last4,
