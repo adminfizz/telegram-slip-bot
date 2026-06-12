@@ -558,6 +558,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
     const reviewItem = {
       id: jobId,
       createdAt: parsedData && parsedData.date ? parsedData.date : null,
+      receivedAt: job.createdAt || new Date().toISOString(),
       last4: hasLast4 ? parsedData.last4 : '',
       amount: parsedData ? parsedData.amount : 0,
       fee: parsedData ? parsedData.fee : 0,

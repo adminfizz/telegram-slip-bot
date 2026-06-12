@@ -1714,6 +1714,23 @@ function renderReviewCard(it) {
     ? `<details class="review-ocr"><summary>📄 ข้อความ OCR ที่อ่านได้</summary><pre>${escHtml(it.ocrText)}</pre></details>`
     : '';
   const dis = ro ? 'disabled' : '';
+
+  // เช็คเดือนว่าตรงกับเดือนที่ส่งสลิปไหม
+  let dateWarningHtml = '';
+  if (it.date && it.receivedAt) {
+    const slipMonth = it.date.split('-')[1]; // e.g. "05"
+    const recDate = new Date(it.receivedAt);
+    const bkkMonth = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', month: '2-digit' }).format(recDate); // e.g. "06"
+    if (slipMonth && bkkMonth && slipMonth !== bkkMonth) {
+      dateWarningHtml = `
+        <div class="date-warning-msg" style="color:var(--red); font-size:12px; margin-top:4px; grid-column:span 2; font-weight:bold;">
+          ⚠️ เดือนไม่ตรงเดือนที่รับสลิป (สลิปเดือน ${slipMonth}, รับเดือน ${bkkMonth})
+          <button type="button" class="btn btn-primary" style="margin-left:8px; padding:2px 8px; font-size:11px; background:var(--blue); border:none; height:auto; display:inline-block;" onclick="updateReviewMonth('${escHtml(it.id)}', '${bkkMonth}')">เปลี่ยนเป็นเดือน ${bkkMonth}</button>
+        </div>
+      `;
+    }
+  }
+
   return `
     <article class="review-card" id="review-${escHtml(it.id)}">
       <div class="review-top">
@@ -1731,6 +1748,7 @@ function renderReviewCard(it) {
         <label>ประเภท<select id="rv-tx-${escHtml(it.id)}" ${dis}>${txOpts}</select></label>
         <label>ธนาคาร<input type="text" id="rv-bank-${escHtml(it.id)}" value="${escHtml(it.bank || '')}" ${dis}></label>
         <label>วันที่<input type="text" id="rv-date-${escHtml(it.id)}" value="${escHtml(it.date || '')}" placeholder="YYYY-MM-DD HH:mm" ${dis}></label>
+        ${dateWarningHtml}
       </div>
       ${ocr}
       <div class="review-actions">
@@ -1772,6 +1790,16 @@ async function discardReview(id) {
     refreshReviewBadge();
     loadReview(true);
   } catch (e) { showToast('❌ ทิ้งไม่สำเร็จ', 'error'); }
+}
+
+function updateReviewMonth(id, targetMonth) {
+  const input = document.getElementById(`rv-date-${id}`);
+  if (input && input.value) {
+    // Replace the MM part in YYYY-MM-DD
+    const nextVal = input.value.replace(/^(\d{4})-(\d{2})-(.*)$/, `$1-${targetMonth}-$3`);
+    input.value = nextVal;
+    showToast('เปลี่ยนเดือนของวันที่เรียบร้อย', 'success');
+  }
 }
 
 // === Init ===

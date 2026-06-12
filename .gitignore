@@ -12,6 +12,12 @@ ai_usage.json
 app.log
 *.log
 temp/
+temp_*.jpg
+*.slip.jpg
+
+# --- Scratch / experiments (ไม่เอาขึ้น repo) ---
+scratch/
+scratch*.js
 
 # --- Deps / build / platform ---
 node_modules/

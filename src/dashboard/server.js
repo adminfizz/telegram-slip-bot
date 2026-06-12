@@ -700,7 +700,7 @@ function createDashboard(port = 3000, options = {}) {
     if (isAuthDisabled()) { req.dashRole = 'admin'; req.dashUser = 'admin'; return next(); }
     const p = req.path;
     // เส้นทางที่เข้าได้โดยไม่ต้องล็อกอิน
-    if (p.startsWith('/oauth2callback') || p === '/login' || p === '/api/login' || p === '/api/logout' || p === '/favicon.svg') return next();
+    if (p.startsWith('/oauth2callback') || p === '/login' || p === '/api/login' || p === '/api/logout' || p === '/favicon.svg' || p === '/api/public/summary') return next();
 
     const env = parseEnv();
     const raw = parseCookies(req).slip_session || '';
@@ -1220,6 +1220,50 @@ pin.focus();
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
+  // API สรุปยอดสาธารณะสำหรับเว็บอื่นดึงไปแสดง (ไม่ต้องใช้ PIN และรองรับ CORS)
+  app.get('/api/public/summary', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+
+    try {
+      const now = Date.now();
+      // ใช้ cache ของ today เพื่อความรวดเร็วและประหยัด API rate limit ของ Google
+      if (todayCache && now - todayCache.at < TODAY_CACHE_MS) {
+        return res.json({ ...todayCache.payload, cached: true });
+      }
+
+      const ctx = await ensureGoogleContext();
+      const { getReport, getTodayStr } = require('../sheets');
+      const sum = (report) => {
+        let total = 0, count = 0, fee = 0, transfer = 0, withdraw = 0, deposit = 0;
+        Object.entries(report).forEach(([k, a]) => {
+          if (k.startsWith('_')) return;
+          total += Number(a.total || 0); fee += Number(a.feeSum || 0);
+          transfer += Number(a.transferSum || 0); withdraw += Number(a.withdrawSum || 0); deposit += Number(a.depositSum || 0);
+          count += Number(a.transferCount || 0) + Number(a.withdrawCount || 0) + Number(a.depositCount || 0) + Number(a.billCount || 0) + Number(a.otherCount || 0);
+        });
+        return { total, count, fee, transfer, withdraw, deposit };
+      };
+      
+      const todayStr = getTodayStr();
+      const monthRange = `${todayStr.slice(0, 8)}01~${todayStr}`;
+      const [todayReport, monthReport] = await Promise.all([
+        getReport(ctx.authClient, ctx.spreadsheetId, null, null),
+        getReport(ctx.authClient, ctx.spreadsheetId, null, monthRange),
+      ]);
+      const payload = { ok: true, today: sum(todayReport), month: sum(monthReport), monthLabel: todayStr.slice(0, 7), fetchedAt: new Date().toISOString() };
+      todayCache = { at: now, payload };
+      res.json(payload);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // แนวโน้มรายวัน
   app.get('/api/trends', async (req, res) => {
     try {
@@ -1649,7 +1693,12 @@ pin.focus();
     try {
       if (!shouldCreateTunnel) return;
       const localtunnel = require('localtunnel');
-      const tunnel = await localtunnel({ port: port });
+      const env = parseEnv();
+      const ltOpts = { port: port };
+      if (env.SUBDOMAIN) {
+        ltOpts.subdomain = env.SUBDOMAIN;
+      }
+      const tunnel = await localtunnel(ltOpts);
       console.log(`🌍 PUBLIC LINK: ${tunnel.url}`);
       pushLog(`🔗 ลิงก์ออนไลน์ (ส่งให้คนนอกเข้าได้): ${tunnel.url}`, 'info');
       
