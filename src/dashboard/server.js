@@ -1922,24 +1922,26 @@ pin.focus();
     console.log(`\n🌐 Dashboard: http://localhost:${port}`);
     console.log(`🌐 Public:    http://YOUR_PUBLIC_IP:${port}\n`);
     
-    // Create public tunnel
-    try {
-      if (!shouldCreateTunnel) return;
-      const localtunnel = require('localtunnel');
-      const env = parseEnv();
-      const ltOpts = { port: port };
-      if (env.SUBDOMAIN) {
-        ltOpts.subdomain = env.SUBDOMAIN;
+    // Create public tunnel — ครอบด้วย if (อย่าใช้ early return! เดิม `if (!shouldCreateTunnel) return;`
+    // จะ return ออกจาก callback ทั้งก้อน ทำให้ auto-start บอทด้านล่างไม่ทำงานเมื่อปิด localtunnel)
+    if (shouldCreateTunnel) {
+      try {
+        const localtunnel = require('localtunnel');
+        const env = parseEnv();
+        const ltOpts = { port: port };
+        if (env.SUBDOMAIN) {
+          ltOpts.subdomain = env.SUBDOMAIN;
+        }
+        const tunnel = await localtunnel(ltOpts);
+        console.log(`🌍 PUBLIC LINK: ${tunnel.url}`);
+        pushLog(`🔗 ลิงก์ออนไลน์ (ส่งให้คนนอกเข้าได้): ${tunnel.url}`, 'info');
+
+        tunnel.on('close', () => {
+          pushLog('🔴 ลิงก์ออนไลน์ถูกปิดตัวลง', 'error');
+        });
+      } catch (e) {
+        pushLog('⚠️ ไม่สามารถสร้างลิงก์ออนไลน์ได้: ' + e.message, 'error');
       }
-      const tunnel = await localtunnel(ltOpts);
-      console.log(`🌍 PUBLIC LINK: ${tunnel.url}`);
-      pushLog(`🔗 ลิงก์ออนไลน์ (ส่งให้คนนอกเข้าได้): ${tunnel.url}`, 'info');
-      
-      tunnel.on('close', () => {
-        pushLog('🔴 ลิงก์ออนไลน์ถูกปิดตัวลง', 'error');
-      });
-    } catch (e) {
-      pushLog('⚠️ ไม่สามารถสร้างลิงก์ออนไลน์ได้: ' + e.message, 'error');
     }
 
     // Auto-start bot if config is ready
