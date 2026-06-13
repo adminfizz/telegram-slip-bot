@@ -22,6 +22,30 @@ function getDb() {
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_slips_last4 ON slips(last4)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_slips_date ON slips(date)');
+    // ประวัติข้อความ Telegram ทั้งหมด (ทุกข้อความที่ส่งเข้า รวมที่ไม่ใช่สลิป/fail) — ไว้ติดตามย้อนหลัง
+    db.exec(`CREATE TABLE IF NOT EXISTS tg_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      received_at TEXT,        -- เวลาเซิร์ฟเวอร์รับ (ISO UTC)
+      tg_date INTEGER,         -- เวลาส่งจริงจาก Telegram (unix วินาที)
+      tg_time_th TEXT,         -- เวลาส่งจริงแบบไทย (Asia/Bangkok) อ่านง่าย
+      chat_id TEXT,
+      message_id INTEGER,
+      from_id TEXT,
+      username TEXT,
+      first_name TEXT,
+      msg_type TEXT,           -- photo/text/document/sticker/voice/...
+      text TEXT,               -- msg.text หรือ caption
+      file_id TEXT,            -- สำหรับ photo/document/ฯลฯ
+      status TEXT,             -- received/slip_success/slip_fail/slip_duplicate/ignored
+      slip_hash TEXT,          -- ผูกกับสลิปถ้ากลายเป็นสลิป
+      note TEXT,               -- เหตุผล/ข้อความ error
+      raw TEXT                 -- JSON ย่อของ msg เผื่อดูละเอียด
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_tg_chat ON tg_messages(chat_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_tg_msgid ON tg_messages(message_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_tg_date ON tg_messages(tg_date)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_tg_from ON tg_messages(from_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_tg_status ON tg_messages(status)');
     return db;
   } catch (e) {
     console.error('localdb: เปิด SQLite ไม่ได้ (ปิดการ mirror):', e.message);
@@ -76,4 +100,72 @@ function localDbStats() {
   } catch (e) { return { available: false, count: 0, total: 0 }; }
 }
 
-module.exports = { mirrorSlip, mirrorMany, clearLocalDb, localDbStats, getDb };
+// ── ประวัติข้อความ Telegram ──────────────────────────────────────────────
+// บันทึก 1 ข้อความที่ส่งเข้ามา (เรียกจาก catch-all bot.on('message')) — ห้าม throw เด็ดขาด กัน bot ล่ม
+function logTgMessage(m) {
+  const conn = getDb();
+  if (!conn || !m) return;
+  try {
+    const tgDate = Number(m.tgDate) || 0;
+    let tgTimeTh = '';
+    if (tgDate > 0) {
+      try { tgTimeTh = new Date(tgDate * 1000).toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }); } catch (_) {}
+    }
+    conn.prepare(`INSERT INTO tg_messages
+      (received_at,tg_date,tg_time_th,chat_id,message_id,from_id,username,first_name,msg_type,text,file_id,status,slip_hash,note,raw)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(new Date().toISOString(), tgDate, tgTimeTh,
+        String(m.chatId != null ? m.chatId : ''), Number(m.messageId) || 0, String(m.fromId != null ? m.fromId : ''),
+        String(m.username || ''), String(m.firstName || ''), String(m.type || ''),
+        String(m.text || ''), String(m.fileId || ''), String(m.status || 'received'),
+        String(m.slipHash || ''), String(m.note || ''), m.raw ? String(m.raw) : '');
+  } catch (e) { console.error('localdb logTgMessage failed:', e.message); }
+}
+
+// อัปเดตสถานะของข้อความ (ผูกผลสลิปกลับเข้า row เดิม) — เลือก row ล่าสุดที่ตรง chat+message
+function updateTgMessageStatus(chatId, messageId, patch = {}) {
+  const conn = getDb();
+  if (!conn) return;
+  try {
+    const sets = [], vals = [];
+    if (patch.status !== undefined) { sets.push('status=?'); vals.push(String(patch.status)); }
+    if (patch.slipHash !== undefined) { sets.push('slip_hash=?'); vals.push(String(patch.slipHash)); }
+    if (patch.note !== undefined) { sets.push('note=?'); vals.push(String(patch.note)); }
+    if (!sets.length) return;
+    const cid = String(chatId != null ? chatId : ''), mid = Number(messageId) || 0;
+    conn.prepare(`UPDATE tg_messages SET ${sets.join(',')}
+      WHERE id = (SELECT id FROM tg_messages WHERE chat_id=? AND message_id=? ORDER BY id DESC LIMIT 1)`)
+      .run(...vals, cid, mid);
+  } catch (e) { console.error('localdb updateTgMessageStatus failed:', e.message); }
+}
+
+// ดึงประวัติย้อนหลัง (ใหม่สุดก่อน) — กรองตาม chat/from/status/type/since ได้
+function queryTgMessages(opts = {}) {
+  const conn = getDb();
+  if (!conn) return [];
+  try {
+    const where = [], vals = [];
+    if (opts.chatId)  { where.push('chat_id=?');  vals.push(String(opts.chatId)); }
+    if (opts.fromId)  { where.push('from_id=?');  vals.push(String(opts.fromId)); }
+    if (opts.status)  { where.push('status=?');   vals.push(String(opts.status)); }
+    if (opts.msgType) { where.push('msg_type=?'); vals.push(String(opts.msgType)); }
+    if (opts.since)   { where.push('tg_date>=?'); vals.push(Number(opts.since) || 0); }
+    const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 1000);
+    const sql = `SELECT * FROM tg_messages ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ?`;
+    return conn.prepare(sql).all(...vals, limit);
+  } catch (e) { console.error('localdb queryTgMessages failed:', e.message); return []; }
+}
+
+function tgMessageStats() {
+  const conn = getDb();
+  if (!conn) return { available: false, count: 0 };
+  try {
+    const r = conn.prepare('SELECT COUNT(*) c FROM tg_messages').get();
+    return { available: true, count: Number(r.c) || 0 };
+  } catch (e) { return { available: false, count: 0 }; }
+}
+
+module.exports = {
+  mirrorSlip, mirrorMany, clearLocalDb, localDbStats, getDb,
+  logTgMessage, updateTgMessageStatus, queryTgMessages, tgMessageStats,
+};

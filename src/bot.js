@@ -20,7 +20,7 @@ const {
 const { extractSlipData } = require('./ocr');
 const { parseSlipData, slipDateWarning } = require('./parser');
 const { uploadSlip } = require('./drive');
-const { mirrorSlip, clearLocalDb } = require('./localdb');
+const { mirrorSlip, clearLocalDb, logTgMessage, updateTgMessageStatus, queryTgMessages } = require('./localdb');
 const slipQueue = require('./queue');
 const {
   createSlipJob,
@@ -327,6 +327,55 @@ function setupBot(authClient) {
   bot.onText(/\/help/, handleHelp);
   bot.onText(/ℹ️ วิธีใช้งาน/, handleHelp);
 
+  // ── เก็บประวัติ "ทุกข้อความ" ที่ส่งเข้ามา (catch-all) ลง SQLite — ไว้ติดตามย้อนหลัง ──
+  // 'message' ของ node-telegram-bot-api ยิงครั้งเดียวต่อ 1 ข้อความ ครอบคลุมทุกชนิด (text/รูป/ไฟล์/sticker/คำสั่ง)
+  // ห่อ try/catch ทั้งก้อน: การ log ห้ามทำให้บอทล่มเด็ดขาด และ log ทุกคนแม้ไม่มีสิทธิ์ (ไว้ตรวจสอบ)
+  bot.on('message', (msg) => {
+    try {
+      let type = 'other', fileId = '';
+      if (msg.photo && msg.photo.length) { type = 'photo'; fileId = msg.photo[msg.photo.length - 1].file_id; }
+      else if (msg.document) { type = 'document'; fileId = msg.document.file_id; }
+      else if (msg.video) { type = 'video'; fileId = msg.video.file_id; }
+      else if (msg.voice) { type = 'voice'; fileId = msg.voice.file_id; }
+      else if (msg.audio) { type = 'audio'; fileId = msg.audio.file_id; }
+      else if (msg.sticker) { type = 'sticker'; fileId = msg.sticker.file_id; }
+      else if (msg.location) { type = 'location'; }
+      else if (msg.contact) { type = 'contact'; }
+      else if (msg.text) { type = msg.text.startsWith('/') ? 'command' : 'text'; }
+      logTgMessage({
+        chatId: msg.chat && msg.chat.id,
+        messageId: msg.message_id,
+        fromId: msg.from && msg.from.id,
+        username: msg.from && msg.from.username,
+        firstName: msg.from && msg.from.first_name,
+        type,
+        text: msg.text || msg.caption || '',
+        fileId,
+        tgDate: msg.date,
+        status: 'received',
+        raw: JSON.stringify({ chatType: msg.chat && msg.chat.type, forwarded: !!(msg.forward_date || msg.forward_from), edited: !!msg.edit_date }),
+      });
+    } catch (_) { /* ห้าม throw */ }
+  });
+
+  // คำสั่งดูประวัติย้อนหลังจาก Telegram ได้เลย (เจ้าของเท่านั้น) — /history [จำนวน]
+  const handleHistory = (msg, match) => {
+    if (!checkAccess(msg)) return;
+    const n = Math.min(Math.max(parseInt(match && match[1], 10) || 15, 1), 50);
+    const rows = queryTgMessages({ limit: n });
+    if (!rows.length) return bot.sendMessage(msg.chat.id, '📭 ยังไม่มีประวัติข้อความที่บันทึกไว้');
+    const lines = rows.map((r) => {
+      const when = r.tg_time_th || (r.received_at || '').replace('T', ' ').slice(0, 19);
+      const who = r.username ? '@' + r.username : (r.first_name || r.from_id || '?');
+      const st = r.status && r.status !== 'received' ? ` [${r.status}]` : '';
+      const body = (r.text || '').replace(/\s+/g, ' ').slice(0, 40);
+      return `🕒 ${when} • ${who} • ${r.msg_type}${st}${body ? ' • ' + body : ''}`;
+    });
+    bot.sendMessage(msg.chat.id, `📜 ประวัติล่าสุด ${rows.length} ข้อความ:\n\n${lines.join('\n')}`);
+  };
+  bot.onText(/^\/history(?:\s+(\d+))?/, handleHistory);
+  bot.onText(/📜 ประวัติ/, handleHistory);
+
   bot.on('polling_error', (error) => {
     console.error(`[Telegram Polling Error] ${error.code}: ${error.message}`);
     // Not killing the process, let it retry
@@ -479,6 +528,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
       duplicateOfDriveLink: localDup ? localDup.driveLink : '',
       duplicateOfDate: localDup && localDup.parsedData ? localDup.parsedData.date : '',
     });
+    updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_duplicate', note: localDup ? ('ซ้ำกับงาน ' + localDup.id) : 'ซ้ำ' });
     const origNote = localDup ? `\n📎 ซ้ำกับใบที่เคยส่ง (งาน ${localDup.id})` : '';
     await editOrSend(bot, job, `⚠️ สลิปซ้ำ งาน ${jobId}\nเคยบันทึกในแท็บ "${dupCheck.tabName}" แล้ว${origNote}`);
     return;
@@ -580,6 +630,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
     } catch (e) { console.error('addReviewItem failed:', e.message); }
 
     markDone(jobId, { status: 'review', step: 'review', last4: reviewItem.last4 });
+    updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_review', note: 'รอตรวจทาน' });
     await updateQueueStep(task, 'review');
     cleanup(downloadPath);
 
@@ -644,6 +695,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
       duplicateOfDriveLink: origDup ? origDup.driveLink : '',
       duplicateOfDate: origDup && origDup.parsedData ? origDup.parsedData.date : '',
     });
+    updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_duplicate', note: origDup ? ('ซ้ำกับงาน ' + origDup.id) : 'ซ้ำ' });
     const origNote = origDup ? `\n📎 ซ้ำกับใบที่เคยส่ง (งาน ${origDup.id})` : '';
     await editOrSend(bot, job, `⚠️ งาน ${jobId} พบว่าบันทึกไว้แล้วในแท็บ "${dupCheck.tabName}"${origNote}`);
     return;
@@ -659,6 +711,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
 
   await retryOperation('Sheet save', 4, () => appendSlip(authClient, spreadsheetId, parsedData.last4, finalData));
   mirrorSlip(finalData); // สำรองลง SQLite ในเครื่อง (best-effort)
+  updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_success', slipHash: fileHash });
   markDone(jobId, { step: 'done', tabName, last4: parsedData.last4 });
   await updateQueueStep(task, 'done');
   cleanup(downloadPath);
@@ -689,6 +742,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
   } catch (error) {
     const latest = getJob(jobId) || job || {};
     markFailed(jobId, error, { step: latest.step || task.step || 'failed' });
+    updateTgMessageStatus(latest.chatId || (job && job.chatId), latest.messageId || (job && job.messageId), { status: 'slip_fail', note: String((error && (error.message || error)) || '').slice(0, 200) });
     await updateQueueStep(task, 'failed');
     await notifyJob(bot, jobId, `❌ งาน ${jobId} ล้มเหลว: ${error.message || error}`);
     throw error;
