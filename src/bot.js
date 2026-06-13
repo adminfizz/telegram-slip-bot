@@ -537,6 +537,19 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
     const fileHash = job.fileHash || md5(fileBuffer);
     job = updateJob(jobId, { fileHash, step: 'duplicate_check' }) || getJob(jobId);
 
+    // ── idempotent guard: ถ้า job "ใบนี้" เคยบันทึกลงชีตสำเร็จแล้ว (savedHash ตรง) แล้วถูกรันซ้ำ ──
+    //   (บอท error/รีสตาร์ท/lease หมด → "ดึงจับยอดตามหลัง") อย่าไปเช็คซ้ำ เพราะจะเจอ hash ที่ตัวเองเขียน
+    //   แล้วหลงนับเป็น "สลิปซ้ำ" ทั้งที่เป็นใบเดิม → ปิดงานเป็น done เลย
+    if (job && job.savedHash === fileHash) {
+      const tnSelf = job.tabName || (job.parsedData && job.parsedData.last4 ? `บัญชี_${job.parsedData.last4}` : '');
+      markDone(jobId, { step: 'done', tabName: tnSelf, last4: (job.parsedData && job.parsedData.last4) || job.last4 });
+      updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_success', slipHash: fileHash });
+      await updateQueueStep(task, 'done');
+      cleanup(downloadPath);
+      console.log(`[idempotent] ${jobId}: เคยบันทึกชีตสำเร็จแล้ว (savedHash) — ปิดงาน done ไม่นับเป็นซ้ำ`);
+      return;
+    }
+
     await updateQueueStep(task, 'duplicate_check');
   await editOrSend(bot, job, '🔍 กำลังตรวจสอบสลิปซ้ำ...');
   // เช็คซ้ำจากไฟล์ในเครื่องก่อน (0 read quota) — ประหยัด OCR ด้วยถ้าเป็นสลิปที่เคยส่งแล้ว
@@ -712,6 +725,16 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
   dupCheck = await retryOperation('Duplicate check', 4, () => checkDuplicate(authClient, spreadsheetId, fileHash, parsedData.last4));
   if (dupCheck.duplicate) {
     cleanup(downloadPath);
+    // safety ชั้นสอง: ถ้าใบนี้เคยบันทึกสำเร็จแล้ว (รันซ้ำหลัง error) → ไม่ใช่ซ้ำจริง ปิดเป็น done
+    const selfSaved = getJob(jobId);
+    if (selfSaved && selfSaved.savedHash === fileHash) {
+      const tnSelf = dupCheck.tabName || (parsedData.last4 ? `บัญชี_${parsedData.last4}` : '');
+      markDone(jobId, { step: 'done', tabName: tnSelf, last4: parsedData.last4 });
+      updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_success', slipHash: fileHash });
+      await updateQueueStep(task, 'done');
+      console.log(`[idempotent] ${jobId}: เจอ hash ตัวเองในชีต (เคยบันทึกแล้ว) — ปิด done ไม่นับซ้ำ`);
+      return;
+    }
     const origDup = findJobByHash(fileHash, { excludeId: jobId, statuses: ['done', 'duplicate'] });
     markDone(jobId, {
       status: 'duplicate', step: 'duplicate', duplicateTabName: dupCheck.tabName,
@@ -734,6 +757,7 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
   };
 
   await retryOperation('Sheet save', 4, () => appendSlip(authClient, spreadsheetId, parsedData.last4, finalData));
+  updateJob(jobId, { savedHash: fileHash }); // มาร์ก "บันทึกชีตสำเร็จ" ทันที — กันรันซ้ำแล้วหลงนับเป็นซ้ำตัวเอง (ดู idempotent guard ด้านบน)
   mirrorSlip(finalData); // สำรองลง SQLite ในเครื่อง (best-effort)
   updateTgMessageStatus(job.chatId, job.messageId, { status: 'slip_success', slipHash: fileHash });
   markDone(jobId, { step: 'done', tabName, last4: parsedData.last4 });
