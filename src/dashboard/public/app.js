@@ -448,11 +448,31 @@ let bmInFlight = false;
 
 function bmScopeChange() {
   const scope = document.getElementById('bmScope')?.value || 'all';
-  const show = (id, on) => { const el = document.getElementById(id); if (el) el.hidden = !on; };
+  // ใช้ style.display (inline ชนะ .tx-filters label{display:flex} — attribute hidden ใช้ไม่ได้เพราะ CSS ทับ)
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
   show('bmDateWrap', scope === 'day');
   show('bmFromWrap', scope === 'range');
   show('bmToWrap', scope === 'range');
   show('bmMonthWrap', scope === 'month');
+
+  // เติมค่า default ให้เลย ไม่ต้องเลือกวันเอง (วันนี้ / เดือนนี้ / ต้นเดือน→วันนี้) ตามเวลาเครื่อง
+  const now = new Date(), pad = (n) => String(n).padStart(2, '0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const setIfEmpty = (id, val) => { const el = document.getElementById(id); if (el && !el.value) el.value = val; };
+  if (scope === 'day') setIfEmpty('bmDate', today);
+  if (scope === 'month') setIfEmpty('bmMonth', today.slice(0, 7));
+  if (scope === 'range') { setIfEmpty('bmFrom', today.slice(0, 8) + '01'); setIfEmpty('bmTo', today); }
+}
+
+// เติมรายชื่อบัญชีลง dropdown จากผลเทียบ (คงค่าที่เลือกไว้ถ้ายังมี)
+function populateBmAccounts(d) {
+  const sel = document.getElementById('bmAccount');
+  if (!sel) return;
+  const cur = sel.value;
+  const accs = (d.byAccount || []).map(a => a.last4).filter(Boolean);
+  sel.innerHTML = '<option value="">ทุกบัญชี (รวม)</option>'
+    + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}</option>`).join('');
+  sel.value = accs.includes(cur) ? cur : '';
 }
 
 async function loadBankMatch() {
@@ -466,12 +486,12 @@ async function loadBankMatch() {
     if (scope === 'day') p.set('date', document.getElementById('bmDate')?.value || '');
     if (scope === 'range') { p.set('from', document.getElementById('bmFrom')?.value || ''); p.set('to', document.getElementById('bmTo')?.value || ''); }
     if (scope === 'month') p.set('month', document.getElementById('bmMonth')?.value || '');
-    const last4 = (document.getElementById('bmLast4')?.value || '').replace(/\D/g, '');
-    if (last4) p.set('last4', last4);
+    // ดึงทุกบัญชีมาเสมอ แล้วใช้ dropdown กรองฝั่ง client (เลือกบัญชีไม่ต้องดึงใหม่)
     const res = await fetch('/api/bankmatch?' + p.toString(), { cache: 'no-store' });
     const d = await res.json();
     if (!d.ok) { box.innerHTML = `<div class="info-card"><div style="color:var(--red);text-align:center;">${escHtml(d.error || 'เทียบไม่สำเร็จ')}</div></div>`; bmData = null; return; }
     bmData = d;
+    populateBmAccounts(d);
     setText('bmUpdatedAt', `อัปเดต ${d.fetchedAt ? new Date(d.fetchedAt).toLocaleString('th-TH') : ''}`);
     renderBankMatch();
   } catch (_) { box.innerHTML = '<div class="info-card"><div style="color:var(--red);text-align:center;">เทียบไม่สำเร็จ</div></div>'; }
@@ -503,30 +523,49 @@ function bmList(title, arr, kind, hint) {
 function renderBankMatch() {
   const box = document.getElementById('bmContainer');
   if (!box || !bmData) return;
-  const d = bmData, s = d.summary;
+  const d = bmData;
+  const acc = document.getElementById('bmAccount')?.value || ''; // '' = ทุกบัญชี
+  const flt = (arr) => acc ? (arr || []).filter(x => x.last4 === acc) : (arr || []);
+  const matched = flt(d.matched), bankOnly = flt(d.bankOnly), slipOnly = flt(d.slipOnly);
+  const sumA = (arr) => arr.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const sumSlip = (arr) => arr.reduce((a, x) => a + (Number(x.slip && x.slip.amount) || 0), 0);
+
   const warn = !d.bankApiOk ? `<div class="info-card" style="border-color:var(--red);"><div style="color:var(--red);">⚠️ ดึงรายการธนาคารไม่ได้: ${escHtml(d.bankApiError || '')} — ตอนนี้เทียบกับ “ศูนย์รายการธนาคาร” (สลิปทั้งหมดจะขึ้นเป็น “เกินสลิป”) เช็กว่า debittrans deploy API + ตั้ง key แล้วหรือยัง</div></div>` : '';
+
+  // ยอดรวม: ถ้าเลือก "ทุกบัญชี" ใช้ summary จาก server; ถ้าเลือกบัญชีเดียว คำนวณจากรายการที่กรองแล้ว
+  const bankCount = matched.length + bankOnly.length;
+  const slipCount = matched.length + slipOnly.length;
+  const bankTotal = acc ? sumA(matched) + sumA(bankOnly) : d.summary.bankTotal;
+  const slipTotal = acc ? sumSlip(matched) + sumA(slipOnly) : d.summary.slipTotal;
+  const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}` : '';
   const chips = `<div class="tokchart-avg">
-    🏦 ธนาคาร <b>${s.bankCount}</b> (${fmtMoney(s.bankTotal)} ฿) · 🧾 สลิป <b>${s.slipCount}</b> (${fmtMoney(s.slipTotal)} ฿)<br>
-    ✅ ตรงกัน <b>${s.matchedCount}</b> (${fmtMoney(s.matchedTotal)} ฿) · ⚠️ ขาดสลิป <b>${s.bankOnlyCount}</b> (${fmtMoney(s.bankOnlyTotal)} ฿) · 🟡 เกินสลิป <b>${s.slipOnlyCount}</b> (${fmtMoney(s.slipOnlyTotal)} ฿)
+    🏦 ธนาคาร <b>${bankCount}</b> (${fmtMoney(bankTotal)} ฿) · 🧾 สลิป <b>${slipCount}</b> (${fmtMoney(slipTotal)} ฿)${scopeTag}<br>
+    ✅ ตรงกัน <b>${matched.length}</b> (${fmtMoney(sumA(matched))} ฿) · ⚠️ ขาดสลิป <b>${bankOnly.length}</b> (${fmtMoney(sumA(bankOnly))} ฿) · 🟡 เกินสลิป <b>${slipOnly.length}</b> (${fmtMoney(sumA(slipOnly))} ฿)
   </div>`;
 
-  const view = document.getElementById('bmView')?.value || 'combined';
+  // ตารางสรุปแยกรายบัญชี — โชว์เฉพาะตอนเลือก "ทุกบัญชี" (คลิกบัญชีเพื่อกรอง)
   let accTable = '';
-  if (view === 'account') {
-    const rows = (d.byAccount || []).map(a => `<div class="tx-row">
+  if (!acc && (d.byAccount || []).length > 1) {
+    const rows = d.byAccount.map(a => `<div class="tx-row bm-acc-row" onclick="bmPickAccount('${escHtml(a.last4)}')" style="cursor:pointer;">
       <span>****${escHtml(a.last4 || '-')}</span>
       <span>✅ ${a.matchedCount} (${fmtMoney(a.matchedTotal)})</span>
       <span>⚠️ ${a.bankOnlyCount} (${fmtMoney(a.bankOnlyTotal)})</span>
       <span>🟡 ${a.slipOnlyCount} (${fmtMoney(a.slipOnlyTotal)})</span></div>`).join('');
-    accTable = `<div class="info-card" style="margin-top:.75rem;"><h3>แยกรายบัญชี</h3>
+    accTable = `<div class="info-card" style="margin-top:.75rem;"><h3>แยกรายบัญชี <span class="subtitle">(คลิกบัญชีเพื่อดูเฉพาะตัวนั้น)</span></h3>
       <div class="tx-table"><div class="tx-row tx-head"><span>บัญชี</span><span>ตรงกัน</span><span>ขาดสลิป</span><span>เกินสลิป</span></div>
-      ${rows || '<div class="tx-row"><span>—</span></div>'}</div></div>`;
+      ${rows}</div></div>`;
   }
 
   box.innerHTML = warn + chips + accTable
-    + bmList('⚠️ ขาดสลิป', d.bankOnly, 'bank', 'มีในธนาคาร แต่ไม่มีสลิปที่บันทึก')
-    + bmList('🟡 เกินสลิป', d.slipOnly, 'slip', 'มีสลิปที่บันทึก แต่ไม่เจอในธนาคาร')
-    + bmList('✅ ตรงกัน', d.matched, 'matched', 'ยอดธนาคารจับคู่กับสลิปได้');
+    + bmList('⚠️ ขาดสลิป', bankOnly, 'bank', 'มีในธนาคาร แต่ไม่มีสลิปที่บันทึก')
+    + bmList('🟡 เกินสลิป', slipOnly, 'slip', 'มีสลิปที่บันทึก แต่ไม่เจอในธนาคาร')
+    + bmList('✅ ตรงกัน', matched, 'matched', 'ยอดธนาคารจับคู่กับสลิปได้');
+}
+
+// คลิกแถวบัญชีในตารางสรุป → เลือกใน dropdown แล้ว re-render
+function bmPickAccount(last4) {
+  const sel = document.getElementById('bmAccount');
+  if (sel) { sel.value = last4; renderBankMatch(); }
 }
 
 // รีเช็ครายวัน (รูปที่ส่ง vs บันทึก) — แสดงในแท็บ Log

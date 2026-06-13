@@ -388,14 +388,12 @@
             <option value="range">ช่วงเวลา</option>
             <option value="month">รายเดือน</option>
           </select></label>
-          <label id="bmDateWrap" hidden>วัน<input type="date" id="bmDate"></label>
-          <label id="bmFromWrap" hidden>จาก<input type="date" id="bmFrom"></label>
-          <label id="bmToWrap" hidden>ถึง<input type="date" id="bmTo"></label>
-          <label id="bmMonthWrap" hidden>เดือน<input type="month" id="bmMonth"></label>
-          <label>บัญชี (เลขท้าย)<input type="text" id="bmLast4" placeholder="ทุกบัญชี" inputmode="numeric" style="width:7rem;"></label>
-          <label>มุมมอง<select id="bmView" onchange="renderBankMatch()">
-            <option value="combined">รวมทุกบัญชี</option>
-            <option value="account">แยกรายบัญชี</option>
+          <label id="bmDateWrap" style="display:none;">วัน<input type="date" id="bmDate"></label>
+          <label id="bmFromWrap" style="display:none;">จาก<input type="date" id="bmFrom"></label>
+          <label id="bmToWrap" style="display:none;">ถึง<input type="date" id="bmTo"></label>
+          <label id="bmMonthWrap" style="display:none;">เดือน<input type="month" id="bmMonth"></label>
+          <label>บัญชี<select id="bmAccount" onchange="renderBankMatch()">
+            <option value="">ทุกบัญชี (รวม)</option>
           </select></label>
           <button class="btn btn-chip" onclick="loadBankMatch()">เทียบ</button>
         </div>
