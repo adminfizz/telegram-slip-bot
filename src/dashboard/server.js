@@ -41,10 +41,8 @@ function rotateLogIfNeeded() {
 }
 let logBuffer = [];
 function pushLog(message, type = 'info') {
-  // ใส่วันที่ด้วย (YYYY-MM-DD HH:mm:ss, เวลาท้องถิ่น) เพื่อให้ย้อนดู log ข้ามวันได้ว่าเกิดวันไหน
-  const _d = new Date();
-  const _p = (n) => String(n).padStart(2, '0');
-  const timestamp = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`;
+  // เวลาไทย (Asia/Bangkok, +7) เสมอ ไม่ว่ารันบนเครื่องไหน (Vercel = UTC) — รูปแบบ YYYY-MM-DD HH:mm:ss
+  const timestamp = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' });
   const logEntry = `[${timestamp}] ${message}`;
 
   // Keep in memory for dashboard
