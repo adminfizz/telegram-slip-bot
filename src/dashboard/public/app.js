@@ -1036,6 +1036,7 @@ async function loadToday() {
     setNumber('todayCount', t.count, false);
     setNumber('todayTransfer', t.transfer, true);
     setNumber('todayWithdraw', t.withdraw, true);
+    setNumber('todayDeposit', t.deposit, true);
     setNumber('todayFee', t.fee, true);
     setText('todayUpdated', d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString('th-TH') : '');
     if (d.month) {
@@ -1044,6 +1045,7 @@ async function loadToday() {
       setNumber('monthCount', m.count, false);
       setNumber('monthTransfer', m.transfer, true);
       setNumber('monthWithdraw', m.withdraw, true);
+      setNumber('monthDeposit', m.deposit, true);
       setNumber('monthFee', m.fee, true);
       setText('monthLabel', d.monthLabel || '');
     }
