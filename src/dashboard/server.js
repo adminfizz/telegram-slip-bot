@@ -41,7 +41,10 @@ function rotateLogIfNeeded() {
 }
 let logBuffer = [];
 function pushLog(message, type = 'info') {
-  const timestamp = new Date().toLocaleTimeString('th-TH');
+  // ใส่วันที่ด้วย (YYYY-MM-DD HH:mm:ss, เวลาท้องถิ่น) เพื่อให้ย้อนดู log ข้ามวันได้ว่าเกิดวันไหน
+  const _d = new Date();
+  const _p = (n) => String(n).padStart(2, '0');
+  const timestamp = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`;
   const logEntry = `[${timestamp}] ${message}`;
 
   // Keep in memory for dashboard
