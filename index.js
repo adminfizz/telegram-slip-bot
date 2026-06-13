@@ -12,7 +12,8 @@ if (!fs.existsSync(tokensDir)) fs.mkdirSync(tokensDir, { recursive: true });
 // Start Dashboard (always runs)
 const { createDashboard } = require('./src/dashboard/server');
 const PORT = process.env.DASHBOARD_PORT || 3000;
-createDashboard(PORT);
+// ปิด localtunnel: ใช้ Vercel เป็นทางเข้าสาธารณะแล้ว tunnel จึงซ้ำซ้อน + พ่น error connection refused รัวๆ
+createDashboard(PORT, { localTunnel: false });
 
 // Auto-open browser on local machine
 (async () => {
