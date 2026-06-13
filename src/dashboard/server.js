@@ -1184,6 +1184,22 @@ pin.focus();
     }
   });
 
+  // ── API: เปิดรูปของข้อความตาม id (ไฟล์ที่เซฟถาวรในเครื่อง) ── /api/tg-image?id=123
+  app.get('/api/tg-image', (req, res) => {
+    try {
+      const ldb = require('../localdb');
+      const id = parseInt(req.query.id);
+      const row = id ? ldb.getTgMessageById(id) : null;
+      if (!row) return res.status(404).json({ ok: false, error: 'ไม่พบรายการ' });
+      if (row.image_path && fs.existsSync(row.image_path)) {
+        return res.sendFile(path.resolve(row.image_path));
+      }
+      return res.status(404).json({ ok: false, error: 'ไม่มีไฟล์รูปในเครื่อง', file_id: row.file_id || '' });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // ── API: Report ──
   app.get('/api/report', async (req, res) => {
     try {

@@ -39,13 +39,16 @@ function getDb() {
       status TEXT,             -- received/slip_success/slip_fail/slip_duplicate/ignored
       slip_hash TEXT,          -- ผูกกับสลิปถ้ากลายเป็นสลิป
       note TEXT,               -- เหตุผล/ข้อความ error
-      raw TEXT                 -- JSON ย่อของ msg เผื่อดูละเอียด
+      raw TEXT,                -- JSON ย่อของ msg เผื่อดูละเอียด
+      image_path TEXT          -- path ไฟล์รูปที่เซฟถาวรลงเครื่อง (data/tg_images/)
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_tg_chat ON tg_messages(chat_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_tg_msgid ON tg_messages(message_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_tg_date ON tg_messages(tg_date)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_tg_from ON tg_messages(from_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_tg_status ON tg_messages(status)');
+    // migration: เพิ่มคอลัมน์ image_path ให้ตารางเดิมที่สร้างไว้ก่อนมีฟีเจอร์นี้ (no-op ถ้ามีแล้ว)
+    try { db.exec('ALTER TABLE tg_messages ADD COLUMN image_path TEXT'); } catch (_) { /* มีอยู่แล้ว */ }
     return db;
   } catch (e) {
     console.error('localdb: เปิด SQLite ไม่ได้ (ปิดการ mirror):', e.message);
@@ -131,6 +134,7 @@ function updateTgMessageStatus(chatId, messageId, patch = {}) {
     if (patch.status !== undefined) { sets.push('status=?'); vals.push(String(patch.status)); }
     if (patch.slipHash !== undefined) { sets.push('slip_hash=?'); vals.push(String(patch.slipHash)); }
     if (patch.note !== undefined) { sets.push('note=?'); vals.push(String(patch.note)); }
+    if (patch.imagePath !== undefined) { sets.push('image_path=?'); vals.push(String(patch.imagePath)); }
     if (!sets.length) return;
     const cid = String(chatId != null ? chatId : ''), mid = Number(messageId) || 0;
     conn.prepare(`UPDATE tg_messages SET ${sets.join(',')}
@@ -165,7 +169,16 @@ function tgMessageStats() {
   } catch (e) { return { available: false, count: 0 }; }
 }
 
+// ดึง 1 ข้อความตาม id (ใช้กับ /img และ /api/tg-image)
+function getTgMessageById(id) {
+  const conn = getDb();
+  if (!conn) return null;
+  try {
+    return conn.prepare('SELECT * FROM tg_messages WHERE id=?').get(Number(id) || 0) || null;
+  } catch (e) { console.error('localdb getTgMessageById failed:', e.message); return null; }
+}
+
 module.exports = {
   mirrorSlip, mirrorMany, clearLocalDb, localDbStats, getDb,
-  logTgMessage, updateTgMessageStatus, queryTgMessages, tgMessageStats,
+  logTgMessage, updateTgMessageStatus, queryTgMessages, tgMessageStats, getTgMessageById,
 };

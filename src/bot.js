@@ -20,7 +20,7 @@ const {
 const { extractSlipData } = require('./ocr');
 const { parseSlipData, slipDateWarning } = require('./parser');
 const { uploadSlip } = require('./drive');
-const { mirrorSlip, clearLocalDb, logTgMessage, updateTgMessageStatus, queryTgMessages } = require('./localdb');
+const { mirrorSlip, clearLocalDb, logTgMessage, updateTgMessageStatus, queryTgMessages, getTgMessageById } = require('./localdb');
 const slipQueue = require('./queue');
 const {
   createSlipJob,
@@ -355,6 +355,11 @@ function setupBot(authClient) {
         status: 'received',
         raw: JSON.stringify({ chatType: msg.chat && msg.chat.type, forwarded: !!(msg.forward_date || msg.forward_from), edited: !!msg.edit_date }),
       });
+      // เซฟรูปถาวร เฉพาะรูป (photo หรือ document ที่เป็นรูป) — async fire-and-forget ไม่บล็อกคิว
+      const isImage = type === 'photo' || (type === 'document' && msg.document && /^image\//.test(msg.document.mime_type || ''));
+      if (isImage && fileId) {
+        archiveTgImage(bot, msg.chat && msg.chat.id, msg.message_id, fileId).catch(() => {});
+      }
     } catch (_) { /* ห้าม throw */ }
   });
 
@@ -369,12 +374,31 @@ function setupBot(authClient) {
       const who = r.username ? '@' + r.username : (r.first_name || r.from_id || '?');
       const st = r.status && r.status !== 'received' ? ` [${r.status}]` : '';
       const body = (r.text || '').replace(/\s+/g, ' ').slice(0, 40);
-      return `🕒 ${when} • ${who} • ${r.msg_type}${st}${body ? ' • ' + body : ''}`;
+      const pic = r.file_id ? ' 🖼️' : '';
+      return `#${r.id} 🕒 ${when} • ${who} • ${r.msg_type}${pic}${st}${body ? ' • ' + body : ''}`;
     });
-    bot.sendMessage(msg.chat.id, `📜 ประวัติล่าสุด ${rows.length} ข้อความ:\n\n${lines.join('\n')}`);
+    bot.sendMessage(msg.chat.id, `📜 ประวัติล่าสุด ${rows.length} ข้อความ:\n\n${lines.join('\n')}\n\n🖼️ ดูรูป: /img <id>`);
   };
   bot.onText(/^\/history(?:\s+(\d+))?/, handleHistory);
   bot.onText(/📜 ประวัติ/, handleHistory);
+
+  // ขอดูรูปย้อนหลังตาม id (จาก /history) — ส่งรูปกลับมาให้ดูในแชท (เจ้าของเท่านั้น)
+  bot.onText(/^\/img(?:\s+(\d+))?/, (msg, match) => {
+    if (!checkAccess(msg)) return;
+    const id = parseInt(match && match[1], 10);
+    if (!id) return bot.sendMessage(msg.chat.id, 'พิมพ์: /img <id>  (ดู id ได้จาก /history)');
+    const row = getTgMessageById(id);
+    if (!row) return bot.sendMessage(msg.chat.id, `❌ ไม่พบรายการ id ${id}`);
+    if (!row.file_id) return bot.sendMessage(msg.chat.id, `⚠️ รายการ id ${id} ไม่มีไฟล์รูป (${row.msg_type})`);
+    const caption = `🖼️ id ${id} • ${row.tg_time_th || ''} • ${row.msg_type}${row.status && row.status !== 'received' ? ' [' + row.status + ']' : ''}`;
+    bot.sendPhoto(msg.chat.id, row.file_id, { caption }).catch(async () => {
+      // file_id ส่งเป็นรูปไม่ได้/หมดอายุ → ลองส่งไฟล์ในเครื่องที่เซฟไว้แทน
+      if (row.image_path && fs.existsSync(row.image_path)) {
+        try { await bot.sendDocument(msg.chat.id, row.image_path, { caption }); return; } catch (_) {}
+      }
+      bot.sendMessage(msg.chat.id, `❌ ส่งรูป id ${id} ไม่สำเร็จ (file_id อาจหมดอายุ และไม่มีไฟล์ในเครื่อง)`);
+    });
+  });
 
   bot.on('polling_error', (error) => {
     console.error(`[Telegram Polling Error] ${error.code}: ${error.message}`);
@@ -749,6 +773,28 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
   } finally {
     releaseLease(jobId, queueLeaseOwner);
   }
+}
+
+// เซฟรูปทุกใบที่ส่งเข้ามาลงเครื่องถาวร (data/tg_images/) แล้วผูก path กลับเข้า row ประวัติ
+// เป็น best-effort + async: ห้าม throw / ห้ามบล็อกคิว (เรียกแบบ fire-and-forget จาก catch-all logger)
+async function archiveTgImage(bot, chatId, messageId, fileId) {
+  try {
+    const dir = path.join(process.cwd(), 'data', 'tg_images');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = await bot.downloadFile(fileId, dir); // โหลดมาไว้ใน dir (ใช้ชื่อจาก Telegram)
+    let finalPath = tmp;
+    try {
+      const ext = path.extname(tmp) || '.jpg';
+      const stamp = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }).replace(/[: ]/g, '-');
+      const target = path.join(dir, `${stamp}_${chatId}_${messageId}${ext}`);
+      if (target !== tmp) {
+        if (fs.existsSync(target)) fs.unlinkSync(target);
+        fs.renameSync(tmp, target);
+        finalPath = target;
+      }
+    } catch (_) { /* rename พลาดก็ใช้ชื่อเดิม */ }
+    updateTgMessageStatus(chatId, messageId, { imagePath: finalPath });
+  } catch (e) { console.error('archiveTgImage failed:', e.message); }
 }
 
 function persistSlipFile(tempPath, jobId) {
