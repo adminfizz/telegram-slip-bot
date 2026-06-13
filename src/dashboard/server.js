@@ -1165,6 +1165,25 @@ pin.focus();
     res.json({ logs: newLogs, nextIndex: logBuffer.length });
   });
 
+  // ── API: ประวัติข้อความ Telegram (จาก SQLite ในเครื่อง) — ดึงย้อนหลัง/กรองได้ ──
+  // ตัวอย่าง: /api/tg-history?limit=100&status=slip_fail&chatId=123
+  app.get('/api/tg-history', (req, res) => {
+    try {
+      const ldb = require('../localdb');
+      const rows = ldb.queryTgMessages({
+        limit: parseInt(req.query.limit) || 100,
+        chatId: req.query.chatId,
+        fromId: req.query.fromId,
+        status: req.query.status,
+        msgType: req.query.type,
+        since: req.query.since ? parseInt(req.query.since) : undefined,
+      });
+      res.json({ ok: true, count: rows.length, stats: ldb.tgMessageStats(), rows });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // ── API: Report ──
   app.get('/api/report', async (req, res) => {
     try {
@@ -1512,6 +1531,133 @@ pin.focus();
       const items = await getReconcileLog(ctx.authClient, ctx.spreadsheetId);
       res.json({ ok: true, items: items.slice(0, 30) });
     } catch (e) { res.json({ ok: false, error: e.message, items: [] }); }
+  });
+
+  // ── เทียบยอดกับธนาคารจริง (debittrans API) — ดึง "รายการธนาคาร" มาจับคู่รายรายการกับสลิปที่บันทึก ──
+  // เป็นคนละเรื่องกับ /api/reconcile (อันนั้นเทียบ "รูปที่ส่ง vs ที่ OCR บันทึก")
+  // scope: all | day(&date=YYYY-MM-DD) | range(&from=&to=) | month(&month=YYYY-MM) ; ออปชัน &last4=
+  // key อยู่ฝั่ง server (DEBIT_API_KEY) ไม่ส่งให้ browser เห็น
+  app.get('/api/bankmatch', async (req, res) => {
+    try {
+      const apiUrl = process.env.DEBIT_API_URL || '';
+      const apiKey = process.env.DEBIT_API_KEY || '';
+      if (!apiUrl || !apiKey) {
+        return res.json({ ok: false, needConfig: true, error: 'ยังไม่ได้ตั้ง DEBIT_API_URL / DEBIT_API_KEY บนเซิร์ฟเวอร์' });
+      }
+
+      const scope = String(req.query.scope || 'all');
+      const date = String(req.query.date || '').slice(0, 10);
+      const from = String(req.query.from || '').slice(0, 10);
+      const to = String(req.query.to || '').slice(0, 10);
+      const month = String(req.query.month || '').slice(0, 7);
+      const last4raw = String(req.query.last4 || '').trim();
+      const last4 = /^\d{2,6}$/.test(last4raw) ? last4raw : null;
+
+      // ช่วงวันสำหรับกรอง (inclusive, เทียบสตริง YYYY-MM-DD ได้ตรงเพราะ zero-pad). null = ไม่จำกัด
+      let lo = null, hi = null;
+      if (scope === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(date)) { lo = date; hi = date; }
+      else if (scope === 'range') { if (/^\d{4}-\d{2}-\d{2}$/.test(from)) lo = from; if (/^\d{4}-\d{2}-\d{2}$/.test(to)) hi = to; }
+      else if (scope === 'month' && /^\d{4}-\d{2}$/.test(month)) { lo = `${month}-01`; hi = `${month}-31`; }
+      const inRange = (d) => { const x = String(d || '').slice(0, 10); if (lo && x < lo) return false; if (hi && x > hi) return false; return true; };
+      const normAcc = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+(?=\d)/, ''); // เลขล้วน + ตัดศูนย์นำหน้า — กัน last4 คนละฟอร์แมต/เติมศูนย์
+      const normType = (v) => String(v || '').trim();
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      const last4norm = last4 ? normAcc(last4) : null;
+
+      // 1) ดึงรายการธนาคารจาก debittrans (กันเหนียว: ถ้า API ล่ม → คืนลิสต์ว่าง + แจ้ง error ไม่ทำทั้งคำขอพัง)
+      let bankRaw = [], bankApiOk = true, bankApiError = '';
+      try {
+        const params = { key: apiKey };
+        if (scope === 'day' && lo) params.date = lo; // API รองรับกรองรายวัน → ลดข้อมูลที่โหลด
+        const r = await axios.get(apiUrl, { params, timeout: 20000 });
+        const body = r.data || {};
+        bankRaw = Array.isArray(body.items) ? body.items : (Array.isArray(body) ? body : []);
+        if (body.ok === false) { bankApiOk = false; bankApiError = body.error || 'API ตอบ ok:false'; }
+      } catch (e) {
+        bankApiOk = false;
+        bankApiError = (e.response ? `HTTP ${e.response.status}` : (e.code || e.message)) || 'เรียก API ไม่สำเร็จ';
+      }
+
+      const bankItems = bankRaw.map(b => ({
+        day: String(b.date || '').slice(0, 10),
+        time: b.time || '',
+        last4: normAcc(b.last4),
+        amount: round2(b.amount),
+        tx_type: normType(b.tx_type),
+        bank: b.bank || '',
+        status: b.status || '',
+        note: b.note || '',
+      })).filter(b => b.day && inRange(b.day) && (!last4norm || b.last4 === last4norm));
+
+      // 2) อ่านสลิปที่บันทึก (กรองช่วง/บัญชีเดียวกัน) — เก็บทั้งยอดสุทธิและ gross (สุทธิ+ค่าธรรมเนียม)
+      const { listTransactions } = require('../sheets');
+      const ctx = await ensureGoogleContext();
+      const slipRaw = await listTransactions(ctx.authClient, ctx.spreadsheetId, { targetLast4: last4, limit: 10000 });
+      const slipItems = slipRaw.map(s => {
+        const m = String(s.date || '').match(/^(\d{4}-\d{2}-\d{2})[ T]?(\d{2}:\d{2})?/);
+        const amt = round2(s.amount), fee = round2(s.fee);
+        return {
+          day: m ? m[1] : String(s.date || '').slice(0, 10),
+          time: m && m[2] ? m[2] : '',
+          last4: normAcc(s.last4),
+          amount: amt, fee, gross: round2(amt + fee),
+          tx_type: normType(s.tx_type),
+          counterparty: s.counterparty || '', recipient_last4: s.recipient_last4 || '',
+          bank: s.bank || '', note: s.note || '', hash: s.hash || '',
+        };
+      }).filter(s => s.day && inRange(s.day) && (!last4norm || s.last4 === last4norm));
+
+      // 3) จับคู่รายรายการ — bucket = day|last4|tx_type, แล้ว match ยอด (สุทธิก่อน, ไม่เจอค่อยลอง gross)
+      //    ใช้ multiset (slipUsed) กันยอดซ้ำในวันเดียวจับคู่ซ้ำตัวเดียว
+      const keyOf = (x) => `${x.day}|${x.last4}|${x.tx_type}`;
+      const buckets = new Map();
+      slipItems.forEach((s, i) => {
+        const k = keyOf(s);
+        if (!buckets.has(k)) buckets.set(k, []);
+        buckets.get(k).push(i);
+      });
+      const slipUsed = new Array(slipItems.length).fill(false);
+      const matched = [], bankOnly = [];
+      bankItems.forEach(b => {
+        const pool = buckets.get(keyOf(b)) || [];
+        let hit = -1, via = '';
+        for (const i of pool) { if (!slipUsed[i] && slipItems[i].amount === b.amount) { hit = i; via = 'net'; break; } }
+        if (hit < 0) for (const i of pool) { if (!slipUsed[i] && slipItems[i].gross === b.amount) { hit = i; via = 'gross'; break; } }
+        if (hit >= 0) { slipUsed[hit] = true; matched.push({ ...b, slip: slipItems[hit], via }); }
+        else bankOnly.push(b);
+      });
+      const slipOnly = slipItems.filter((_, i) => !slipUsed[i]);
+
+      // 4) สรุปรวม + แยกรายบัญชี
+      const sumAmt = (arr) => round2(arr.reduce((a, x) => a + (Number(x.amount) || 0), 0));
+      const accSet = Array.from(new Set([...bankItems, ...slipItems].map(x => x.last4))).filter(Boolean).sort();
+      const byAccount = accSet.map(acc => {
+        const m = matched.filter(x => x.last4 === acc);
+        const bo = bankOnly.filter(x => x.last4 === acc);
+        const so = slipOnly.filter(x => x.last4 === acc);
+        return {
+          last4: acc,
+          matchedCount: m.length, matchedTotal: sumAmt(m),
+          bankOnlyCount: bo.length, bankOnlyTotal: sumAmt(bo),
+          slipOnlyCount: so.length, slipOnlyTotal: sumAmt(so),
+        };
+      });
+
+      res.json({
+        ok: true,
+        scope, filters: { date, from, to, month, last4 },
+        bankApiOk, bankApiError,
+        summary: {
+          bankCount: bankItems.length, bankTotal: sumAmt(bankItems),
+          slipCount: slipItems.length, slipTotal: sumAmt(slipItems),
+          matchedCount: matched.length, matchedTotal: sumAmt(matched),
+          bankOnlyCount: bankOnly.length, bankOnlyTotal: sumAmt(bankOnly),
+          slipOnlyCount: slipOnly.length, slipOnlyTotal: sumAmt(slipOnly),
+        },
+        byAccount, matched, bankOnly, slipOnly,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
   app.get('/api/jobs', async (req, res) => {

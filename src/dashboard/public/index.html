@@ -68,6 +68,9 @@
         <a href="#" class="nav-item" data-tab="transactions">
           <span class="nav-icon">📜</span> รายการ
         </a>
+        <a href="#" class="nav-item" data-tab="bankmatch">
+          <span class="nav-icon">🏦</span> เทียบยอดธนาคาร
+        </a>
         <a href="#" class="nav-item" data-tab="settings">
           <span class="nav-icon">⚙️</span> ตั้งค่า
         </a>
@@ -364,6 +367,39 @@
           <button class="btn btn-chip" onclick="clearTxFilters()">ล้างตัวกรอง</button>
         </div>
         <div id="txContainer" class="jobs-container"><div class="report-loading">กำลังโหลด...</div></div>
+      </section>
+
+      <!-- Bank Match Tab — เทียบยอดกับธนาคารจริง (debittrans) -->
+      <section class="tab-content" id="tab-bankmatch">
+        <div class="page-header" style="justify-content: space-between; align-items: center;">
+          <div>
+            <h1>🏦 เทียบยอดธนาคาร</h1>
+            <p class="subtitle">ดึงรายการจากธนาคารจริง (debittrans) มาจับคู่กับสลิปที่บันทึก รายรายการ · หา "ขาดสลิป" / "เกินสลิป"</p>
+            <p class="live-updated" id="bmUpdatedAt"></p>
+          </div>
+          <div class="jobs-actions">
+            <button class="btn btn-secondary" onclick="loadBankMatch()">🔄 เทียบใหม่</button>
+          </div>
+        </div>
+        <div class="tx-filters">
+          <label>ขอบเขต<select id="bmScope" onchange="bmScopeChange()">
+            <option value="all">ทั้งหมด</option>
+            <option value="day">รายวัน</option>
+            <option value="range">ช่วงเวลา</option>
+            <option value="month">รายเดือน</option>
+          </select></label>
+          <label id="bmDateWrap" hidden>วัน<input type="date" id="bmDate"></label>
+          <label id="bmFromWrap" hidden>จาก<input type="date" id="bmFrom"></label>
+          <label id="bmToWrap" hidden>ถึง<input type="date" id="bmTo"></label>
+          <label id="bmMonthWrap" hidden>เดือน<input type="month" id="bmMonth"></label>
+          <label>บัญชี (เลขท้าย)<input type="text" id="bmLast4" placeholder="ทุกบัญชี" inputmode="numeric" style="width:7rem;"></label>
+          <label>มุมมอง<select id="bmView" onchange="renderBankMatch()">
+            <option value="combined">รวมทุกบัญชี</option>
+            <option value="account">แยกรายบัญชี</option>
+          </select></label>
+          <button class="btn btn-chip" onclick="loadBankMatch()">เทียบ</button>
+        </div>
+        <div id="bmContainer" class="jobs-container"><div class="info-card empty-state">เลือกขอบเขตแล้วกด "เทียบ"</div></div>
       </section>
 
       <!-- Settings Tab -->
