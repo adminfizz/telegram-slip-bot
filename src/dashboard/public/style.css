@@ -1570,6 +1570,12 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 .job-dur { display: block; color: #4ade80; margin-top: 2px; }
 @media (max-width: 820px) { .tx-row { grid-template-columns: 1fr 1fr; } .tx-head { display: none; } .tx-row span::before { } }
 
+/* เทียบยอดธนาคาร — ตารางมีคอลัมน์เฉพาะ (ไม่ใช้ 7 คอลัมน์ของ .tx-row เดิม) */
+.bm-table .tx-row { grid-template-columns: 150px 90px 80px minmax(90px,1fr) 90px minmax(110px,1fr); }
+.bm-acc-table .tx-row { grid-template-columns: 110px repeat(3, minmax(0,1fr)); }
+.bm-acc-row:hover { background: rgba(91,140,255,.10); }
+@media (max-width: 820px) { .bm-table .tx-row, .bm-acc-table .tx-row { grid-template-columns: 1fr 1fr; } }
+
 /* Top 10 */
 .top10-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
 @media (max-width: 720px) { .top10-grid { grid-template-columns: 1fr; } }

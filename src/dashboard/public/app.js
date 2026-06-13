@@ -516,7 +516,7 @@ function bmList(title, arr, kind, hint) {
   return `<div class="info-card" style="margin-top:.75rem;">
     <h3>${title} · ${arr.length} รายการ</h3>
     ${hint ? `<p class="subtitle">${hint}</p>` : ''}
-    <div class="tx-table"><div class="tx-row tx-head"><span>วัน/เวลา</span><span>บัญชี</span><span>ประเภท</span><span>ยอด</span><span>ธนาคาร</span><span></span></div>
+    <div class="tx-table bm-table"><div class="tx-row tx-head"><span>วัน/เวลา</span><span>บัญชี</span><span>ประเภท</span><span>ยอด</span><span>ธนาคาร</span><span>สถานะ/ผู้รับ</span></div>
     ${arr.map(x => bmRow(x, kind)).join('')}</div></div>`;
 }
 
@@ -552,11 +552,14 @@ function renderBankMatch() {
       <span>⚠️ ${a.bankOnlyCount} (${fmtMoney(a.bankOnlyTotal)})</span>
       <span>🟡 ${a.slipOnlyCount} (${fmtMoney(a.slipOnlyTotal)})</span></div>`).join('');
     accTable = `<div class="info-card" style="margin-top:.75rem;"><h3>แยกรายบัญชี <span class="subtitle">(คลิกบัญชีเพื่อดูเฉพาะตัวนั้น)</span></h3>
-      <div class="tx-table"><div class="tx-row tx-head"><span>บัญชี</span><span>ตรงกัน</span><span>ขาดสลิป</span><span>เกินสลิป</span></div>
+      <div class="tx-table bm-acc-table"><div class="tx-row tx-head"><span>บัญชี</span><span>ตรงกัน</span><span>ขาดสลิป</span><span>เกินสลิป</span></div>
       ${rows}</div></div>`;
   }
 
-  box.innerHTML = warn + chips + accTable
+  const empty = (matched.length + bankOnly.length + slipOnly.length) === 0
+    ? '<div class="info-card empty-state" style="margin-top:.75rem;">ไม่พบรายการในช่วง/บัญชีที่เลือก</div>' : '';
+
+  box.innerHTML = warn + chips + empty + accTable
     + bmList('⚠️ ขาดสลิป', bankOnly, 'bank', 'มีในธนาคาร แต่ไม่มีสลิปที่บันทึก')
     + bmList('🟡 เกินสลิป', slipOnly, 'slip', 'มีสลิปที่บันทึก แต่ไม่เจอในธนาคาร')
     + bmList('✅ ตรงกัน', matched, 'matched', 'ยอดธนาคารจับคู่กับสลิปได้');
