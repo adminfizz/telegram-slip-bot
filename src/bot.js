@@ -527,7 +527,8 @@ async function processSlipJob(bot, authClient, jobId, task, options = {}) {
     let downloadPath = job.localPath && fs.existsSync(job.localPath) ? job.localPath : null;
     if (!downloadPath) {
       await editOrSend(bot, job, '⏳ กำลังดาวน์โหลดรูปสลิป...');
-      const tempPath = await bot.downloadFile(job.telegramFileId, path.join(__dirname, '..', 'temp'));
+      // retry 3 รอบ กัน Telegram ไทม์เอาท์ชั่วคราว (504/ECONNRESET) ทำให้สลิป fail ถาวร
+      const tempPath = await retryOperation('Download', 3, () => bot.downloadFile(job.telegramFileId, path.join(__dirname, '..', 'temp')));
       downloadPath = persistSlipFile(tempPath, jobId);
       job = updateJob(jobId, { localPath: downloadPath }) || getJob(jobId);
     }
