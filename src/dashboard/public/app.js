@@ -10,7 +10,15 @@ function accName(last4) {
 }
 function accNameTag(last4) {
   const n = accName(last4);
-  return n ? ` <span class="acc-bank">${escHtml(n)}</span>` : '';
+  return n ? ` <span class="acc-name">${escHtml(n)}</span>` : '';
+}
+// เซลล์บัญชีแบบ 2 บรรทัด: บน = ****เลข + (ธนาคาร), ล่าง = ชื่อบัญชี (ตัดด้วย … ถ้ายาว)
+// ใช้ในตารางที่คอลัมน์บัญชีแคบ กันชื่อตัดคำกลางบรรทัด
+function accCell(last4, bank) {
+  const name = accName(last4);
+  const top = `<span class="acc-cell-top"><strong>****${escHtml(last4)}</strong>${bank ? ` <small>${escHtml(bank)}</small>` : ''}</span>`;
+  const nm = name ? `<small class="acc-cell-name">${escHtml(name)}</small>` : '';
+  return `<span class="acc-cell">${top}${nm}</span>`;
 }
 async function loadDebitNames() {
   try {
@@ -330,7 +338,7 @@ function renderTxRow(t) {
   const acts = ro ? '' : `<button class="btn btn-sm tx-edit-btn" title="แก้ไข" onclick="editTransaction('${escHtml(t.hash)}')">✏️</button><button class="btn btn-sm tx-del" title="ลบ" onclick="deleteTransaction('${escHtml(t.last4)}','${escHtml(t.hash)}')">🗑️</button>`;
   return `<article class="tx-row">
     <span class="tx-date">${escHtml(t.date || '-')}</span>
-    <span><strong>****${escHtml(t.last4)}</strong>${accNameTag(t.last4)} <small>${escHtml(t.bank || '')}</small></span>
+    ${accCell(t.last4, t.bank || '')}
     <span>${escHtml(t.tx_type || '-')}</span>
     <span class="tx-amt">${fmtMoney(t.amount)}</span>
     <span class="tx-fee">${fmtMoney(t.fee)}</span>
@@ -523,7 +531,7 @@ function bmRow(x, kind) {
     : (kind === 'bank' ? `<span class="acc-bank">${escHtml(x.status || '-')}</span>` : `<span class="acc-bank">${escHtml(x.counterparty || '-')}</span>`);
   return `<div class="tx-row">
     <span>${escHtml(x.day || '')}${x.time ? ' ' + escHtml(x.time) : ''}</span>
-    <span>****${escHtml(x.last4 || '-')}${accNameTag(x.last4)}</span>
+    ${x.last4 ? accCell(x.last4, '') : '<span>-</span>'}
     <span>${escHtml(x.tx_type || '-')}</span>
     <span>${fmtMoney(x.amount)} ฿</span>
     <span>${escHtml(x.bank || '-')}</span>
