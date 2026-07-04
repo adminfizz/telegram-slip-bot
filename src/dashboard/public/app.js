@@ -1,6 +1,25 @@
 let publicReadOnly = false;
 let latestSettings = {};
 
+// ── ชื่อบัญชีจาก debittrans (last4 → ชื่อ) — แปะข้างเลขบัญชีทุกจุดในเว็บ ──
+let debitNames = {};
+function accName(last4) {
+  // normalize เหมือนฝั่ง server: ตัดอักขระไม่ใช่เลข + ตัดศูนย์นำหน้า (0906 ↔ 906 จับคู่กันได้)
+  const k = String(last4 == null ? '' : last4).replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+  return (k && debitNames[k]) || '';
+}
+function accNameTag(last4) {
+  const n = accName(last4);
+  return n ? ` <span class="acc-bank">${escHtml(n)}</span>` : '';
+}
+async function loadDebitNames() {
+  try {
+    const r = await fetch('/api/debit-accounts', { cache: 'no-store' });
+    const d = await r.json();
+    if (d && d.accounts && Object.keys(d.accounts).length) debitNames = d.accounts;
+  } catch (_) {}
+}
+
 // ถ้า session หมดอายุ/ยังไม่ล็อกอิน (API ตอบ 401) → เด้งไปหน้า login
 (function () {
   const _fetch = window.fetch.bind(window);
@@ -311,7 +330,7 @@ function renderTxRow(t) {
   const acts = ro ? '' : `<button class="btn btn-sm tx-edit-btn" title="แก้ไข" onclick="editTransaction('${escHtml(t.hash)}')">✏️</button><button class="btn btn-sm tx-del" title="ลบ" onclick="deleteTransaction('${escHtml(t.last4)}','${escHtml(t.hash)}')">🗑️</button>`;
   return `<article class="tx-row">
     <span class="tx-date">${escHtml(t.date || '-')}</span>
-    <span><strong>****${escHtml(t.last4)}</strong> <small>${escHtml(t.bank || '')}</small></span>
+    <span><strong>****${escHtml(t.last4)}</strong>${accNameTag(t.last4)} <small>${escHtml(t.bank || '')}</small></span>
     <span>${escHtml(t.tx_type || '-')}</span>
     <span class="tx-amt">${fmtMoney(t.amount)}</span>
     <span class="tx-fee">${fmtMoney(t.fee)}</span>
@@ -413,7 +432,7 @@ async function saveTxEdit(last4, hash) {
 
 async function deleteTransaction(last4, hash) {
   if (publicReadOnly) return showToast('โหมดดูอย่างเดียว: ลบไม่ได้', 'info');
-  if (!confirm(`ลบรายการบัญชี ****${last4} นี้? (ลบออกจากชีตถาวร)`)) return;
+  if (!confirm(`ลบรายการบัญชี ****${last4}${accName(last4) ? ` (${accName(last4)})` : ''} นี้? (ลบออกจากชีตถาวร)`)) return;
   try {
     const res = await fetch('/api/transactions/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ last4, hash }) });
     const r = await res.json();
@@ -471,7 +490,7 @@ function populateBmAccounts(d) {
   const cur = sel.value;
   const accs = (d.byAccount || []).map(a => a.last4).filter(Boolean);
   sel.innerHTML = '<option value="">ทุกบัญชี (รวม)</option>'
-    + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}</option>`).join('');
+    + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}${accName(a) ? ` · ${escHtml(accName(a))}` : ''}</option>`).join('');
   sel.value = accs.includes(cur) ? cur : '';
 }
 
@@ -504,7 +523,7 @@ function bmRow(x, kind) {
     : (kind === 'bank' ? `<span class="acc-bank">${escHtml(x.status || '-')}</span>` : `<span class="acc-bank">${escHtml(x.counterparty || '-')}</span>`);
   return `<div class="tx-row">
     <span>${escHtml(x.day || '')}${x.time ? ' ' + escHtml(x.time) : ''}</span>
-    <span>****${escHtml(x.last4 || '-')}</span>
+    <span>****${escHtml(x.last4 || '-')}${accNameTag(x.last4)}</span>
     <span>${escHtml(x.tx_type || '-')}</span>
     <span>${fmtMoney(x.amount)} ฿</span>
     <span>${escHtml(x.bank || '-')}</span>
@@ -537,7 +556,7 @@ function renderBankMatch() {
   const slipCount = matched.length + slipOnly.length;
   const bankTotal = acc ? sumA(matched) + sumA(bankOnly) : d.summary.bankTotal;
   const slipTotal = acc ? sumSlip(matched) + sumA(slipOnly) : d.summary.slipTotal;
-  const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}` : '';
+  const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}${accName(acc) ? ` ${escHtml(accName(acc))}` : ''}` : '';
   const chips = `<div class="tokchart-avg">
     🏦 ธนาคาร <b>${bankCount}</b> (${fmtMoney(bankTotal)} ฿) · 🧾 สลิป <b>${slipCount}</b> (${fmtMoney(slipTotal)} ฿)${scopeTag}<br>
     ✅ ตรงกัน <b>${matched.length}</b> (${fmtMoney(sumA(matched))} ฿) · ⚠️ ขาดสลิป <b>${bankOnly.length}</b> (${fmtMoney(sumA(bankOnly))} ฿) · 🟡 เกินสลิป <b>${slipOnly.length}</b> (${fmtMoney(sumA(slipOnly))} ฿)
@@ -547,7 +566,7 @@ function renderBankMatch() {
   let accTable = '';
   if (!acc && (d.byAccount || []).length > 1) {
     const rows = d.byAccount.map(a => `<div class="tx-row bm-acc-row" onclick="bmPickAccount('${escHtml(a.last4)}')" style="cursor:pointer;">
-      <span>****${escHtml(a.last4 || '-')}</span>
+      <span>****${escHtml(a.last4 || '-')}${accNameTag(a.last4)}</span>
       <span>✅ ${a.matchedCount} (${fmtMoney(a.matchedTotal)})</span>
       <span>⚠️ ${a.bankOnlyCount} (${fmtMoney(a.bankOnlyTotal)})</span>
       <span>🟡 ${a.slipOnlyCount} (${fmtMoney(a.slipOnlyTotal)})</span></div>`).join('');
@@ -1133,7 +1152,7 @@ async function loadAccountChart(period) {
     const grand = accts.reduce((s, a) => s + a.total, 0);
     box.innerHTML = `<div class="tokchart-avg">รวมทุกบัญชี <b>${fmtMoney(grand)}</b> ฿ · ${accts.length} บัญชี</div>` +
       accts.map((a, i) => `<div class="tokchart-row">
-        <span class="tokchart-lbl">****${escHtml(a.last4)} <small>${escHtml(a.bank)}</small></span>
+        <span class="tokchart-lbl">****${escHtml(a.last4)}${accNameTag(a.last4)} <small>${escHtml(a.bank)}</small></span>
         <div class="tokchart-track"><div class="tokchart-fill ${ACCT_BAR_CLS[i % ACCT_BAR_CLS.length]}" style="width:${Math.max(Math.round(a.total / max * 100), 3)}%"></div></div>
         <span class="tokchart-val">${fmtMoney(a.total)}</span>
       </div>`).join('');
@@ -1404,7 +1423,7 @@ async function loadReport(forceDate = null, silent = false) {
           return `
             <article class="account-row">
               <div class="account-id">
-                <strong>****${last4}${acc.bank ? ` <span class="acc-bank">(${escHtml(acc.bank)})</span>` : ''}</strong>
+                <strong>****${last4}${accNameTag(last4)}${acc.bank ? ` <span class="acc-bank">(${escHtml(acc.bank)})</span>` : ''}</strong>
                 <small>${txCount} รายการ</small>
               </div>
               <div class="metric transfer" data-label="โอน"><b>${money(acc.transferSum)}</b><small>${acc.transferCount || 0}</small></div>
@@ -1442,7 +1461,7 @@ async function loadReport(forceDate = null, silent = false) {
           <h3 class="recipient-title">🏆 Top 10 บัญชี (ยอดรวม)</h3>
           ${topAccounts.map((a, i) => `
             <div class="recipient-row"><span class="top-rank">${i + 1}</span>
-              <span class="recipient-name">****${escHtml(a.last4)} <span class="acc-bank">${escHtml(a.bank || '')}</span></span>
+              <span class="recipient-name">****${escHtml(a.last4)}${accNameTag(a.last4)} <span class="acc-bank">${escHtml(a.bank || '')}</span></span>
               <strong class="recipient-total">${money(a.total)} ฿</strong></div>`).join('')}
         </div>
       </section>` : ''}
@@ -1584,7 +1603,7 @@ function renderCurrentJob(jobs, stats) {
   const waiting = Number(stats.queued != null ? stats.queued : (stats.recoverable || 0));
   if (cur) {
     el.hidden = false;
-    el.innerHTML = `<span class="jc-spin">⏳</span> กำลังประมวลผล: <b>${escHtml(cur.id)}</b> · ขั้น <b>${escHtml(cur.step || '-')}</b>${cur.last4 ? ` · บัญชี ****${escHtml(cur.last4)}` : ''}${waiting > 1 ? ` · รอในคิวอีก ${waiting - 1}` : ''}`;
+    el.innerHTML = `<span class="jc-spin">⏳</span> กำลังประมวลผล: <b>${escHtml(cur.id)}</b> · ขั้น <b>${escHtml(cur.step || '-')}</b>${cur.last4 ? ` · บัญชี ****${escHtml(cur.last4)}${accName(cur.last4) ? ` ${escHtml(accName(cur.last4))}` : ''}` : ''}${waiting > 1 ? ` · รอในคิวอีก ${waiting - 1}` : ''}`;
   } else if (waiting > 0) {
     el.hidden = false;
     el.innerHTML = `<span class="jc-spin">⏳</span> มีงานรอในคิว <b>${waiting}</b> งาน`;
@@ -1620,7 +1639,7 @@ function duplicateInfo(job) {
 function renderJobRow(job, canRetry) {
   const statusClass = `job-status ${String(job.status || '').toLowerCase()}`;
   const slipInfo = [
-    job.last4 ? `****${job.last4}` : '',
+    job.last4 ? `****${job.last4}${accName(job.last4) ? ` ${escHtml(accName(job.last4))}` : ''}` : '',
     job.amount ? Number(job.amount).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '',
     job.txType || '',
     job.bank || '',
@@ -1905,7 +1924,7 @@ async function confirmReview(id) {
     });
     const r = await res.json();
     if (!r.ok) return showToast('❌ ' + (r.error || 'บันทึกไม่สำเร็จ'), 'error');
-    showToast(r.duplicate ? `⚠️ สลิปนี้บันทึกแล้วในแท็บ ${r.tab}` : `✅ บันทึกบัญชี ****${r.last4} แล้ว`, 'success');
+    showToast(r.duplicate ? `⚠️ สลิปนี้บันทึกแล้วในแท็บ ${r.tab}` : `✅ บันทึกบัญชี ****${r.last4}${accName(r.last4) ? ` (${accName(r.last4)})` : ''} แล้ว`, 'success');
     document.getElementById(`review-${id}`)?.remove();
     refreshReviewBadge();
     loadReview(true);
@@ -1943,9 +1962,13 @@ function updateReviewMonth(id, targetMonth) {
 loadSettings();
 refreshStatus();
 refreshReviewBadge();
-loadToday();
-loadTrends(7);
-loadAccountChart('all');
+// โหลดชื่อบัญชี (debittrans) ให้เสร็จก่อนวาดหน้าแรก — กันเลขบัญชีโผล่ก่อนแล้วชื่อมาทีหลัง
+loadDebitNames().finally(() => {
+  loadToday();
+  loadTrends(7);
+  loadAccountChart('all');
+});
+setInterval(loadDebitNames, 5 * 60 * 1000);
 setInterval(() => {
   if (document.getElementById('tab-dashboard')?.classList.contains('active')) loadToday();
 }, 60000);
