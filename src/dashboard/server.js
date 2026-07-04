@@ -1549,6 +1549,35 @@ pin.focus();
     } catch (e) { res.json({ ok: false, error: e.message, items: [] }); }
   });
 
+  // ── ชื่อบัญชีจาก debittrans (last4 → nickname) — ให้หน้าเว็บแปะชื่อข้างเลขบัญชีทุกจุด ──
+  // ใช้ byCard[] จาก API เดียวกับ bankmatch (key อยู่ฝั่ง server) · cache 5 นาที กันยิง API รัว
+  // key ของ map ถูก normalize เหมือน normAcc ใน bankmatch (ตัดอักขระไม่ใช่เลข + ตัดศูนย์นำหน้า)
+  let debitAccCache = { at: 0, map: {} };
+  app.get('/api/debit-accounts', async (req, res) => {
+    try {
+      const apiUrl = process.env.DEBIT_API_URL || '';
+      const apiKey = process.env.DEBIT_API_KEY || '';
+      if (!apiUrl || !apiKey) return res.json({ ok: false, needConfig: true, accounts: {} });
+      const now = Date.now();
+      if (now - debitAccCache.at < 5 * 60 * 1000 && Object.keys(debitAccCache.map).length) {
+        return res.json({ ok: true, accounts: debitAccCache.map, cached: true });
+      }
+      const r = await axios.get(apiUrl, { params: { key: apiKey }, timeout: 20000 });
+      const byCard = Array.isArray(r.data && r.data.byCard) ? r.data.byCard : [];
+      const map = {};
+      for (const c of byCard) {
+        const l4 = String(c.last4 == null ? '' : c.last4).replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+        const nick = String(c.nickname || '').trim();
+        if (l4 && nick) map[l4] = nick;
+      }
+      debitAccCache = { at: now, map };
+      res.json({ ok: true, accounts: map });
+    } catch (e) {
+      // ล้มแล้วคืน cache เก่า (ถ้ามี) — หน้าเว็บยังมีชื่อใช้ ไม่พังทั้งหน้า
+      res.json({ ok: Object.keys(debitAccCache.map).length > 0, error: (e.response ? `HTTP ${e.response.status}` : e.message) || 'ดึงชื่อบัญชีไม่สำเร็จ', accounts: debitAccCache.map });
+    }
+  });
+
   // ── เทียบยอดกับธนาคารจริง (debittrans API) — ดึง "รายการธนาคาร" มาจับคู่รายรายการกับสลิปที่บันทึก ──
   // เป็นคนละเรื่องกับ /api/reconcile (อันนั้นเทียบ "รูปที่ส่ง vs ที่ OCR บันทึก")
   // scope: all | day(&date=YYYY-MM-DD) | range(&from=&to=) | month(&month=YYYY-MM) ; ออปชัน &last4=
