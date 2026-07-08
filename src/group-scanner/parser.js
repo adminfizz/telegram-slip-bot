@@ -23,7 +23,8 @@ const BANK_MAP = [
   { code: 'BAY',   kw: ['กรุงศรี', 'bay', 'ayudhya', 'krungsri'] },
   { code: 'TTB',   kw: ['ทหารไทย', 'ธนชาต', 'ttb', 'tmb', 'thanachart'] },
   { code: 'GSB',   kw: ['ออมสิน', 'gsb', 'government savings'] },
-  { code: 'BAAC',  kw: ['ธกส', 'ธ.ก.ส', 'baac'] },
+  { code: 'BAAC',  kw: ['เพื่อการเกษตร', 'ธกส', 'ธ.ก.ส', 'baac'] },
+  { code: 'GHB',   kw: ['อาคารสงเคราะห์', 'ghb', 'ghbank'] },
   { code: 'UOB',   kw: ['ยูโอบี', 'uob'] },
   { code: 'CIMB',  kw: ['ซีไอเอ็มบี', 'cimb'] },
   { code: 'KKP',   kw: ['เกียรตินาคิน', 'kkp', 'kiatnakin'] },
@@ -99,7 +100,7 @@ function parseGroupMessage(text) {
   };
   const fresh = () => ({
     company: '', user: '', name: '', bankRaw: '', bank: null,
-    accountFull: '', last4: '', amount: null, amountRaw: '',
+    accountFull: '', accountRaw: '', last4: '', amount: null, amountRaw: '',
     raw: [], usable: false,
   });
 
@@ -128,27 +129,37 @@ function parseGroupMessage(text) {
       case 'user':    cur.user = hit.value; break;
       case 'name':    cur.name = hit.value; break;
       case 'bank':    cur.bankRaw = hit.value; cur.bank = normBank(hit.value); break;
-      case 'account': { const a = parseAccount(hit.value); cur.accountFull = a.full; cur.last4 = a.last4; break; }
+      case 'account': { cur.accountRaw = hit.value; const a = parseAccount(hit.value); cur.accountFull = a.full; cur.last4 = a.last4; break; }
       case 'amount':  cur.amountRaw = hit.value; cur.amount = parseAmount(hit.value); break;
     }
   }
   flush();
 
   // สรุป raw เป็นสตริงเดียว + คีย์จับคู่
-  return records.map(r => ({
-    company: r.company,
-    user: r.user,
-    name: r.name,
-    bank: r.bank,
-    bankRaw: r.bankRaw,
-    account: r.accountFull,
-    last4: r.last4,
-    amount: r.amount,
-    raw: r.raw.join('\n').trim(),
-    usable: r.usable,
-    // คีย์จับคู่กับสลิป: amount|last4|bank (bank ใช้รหัสมาตรฐาน; ว่างถ้าไม่รู้จัก)
-    matchKey: r.amount != null ? `${r.amount}|${r.last4}|${r.bank || ''}` : null,
-  }));
+  return records.map(r => {
+    // กันพิมพ์สลับช่อง: ธนาคารเป็นเลขยาว (≥6 หลัก) + เลขบัญชีเป็นชื่อธนาคารที่รู้จัก → สลับกลับ
+    const bankDigits = String(r.bankRaw || '').replace(/\D/g, '');
+    if (bankDigits.length >= 6 && !r.last4 && normBank(r.accountRaw)) {
+      const swappedBank = r.accountRaw;
+      r.accountFull = bankDigits; r.last4 = bankDigits.slice(-4);
+      r.bankRaw = swappedBank; r.bank = normBank(swappedBank);
+    }
+    const usable = r.amount != null && !!r.last4 && !!r.bank;
+    return {
+      company: r.company,
+      user: r.user,
+      name: r.name,
+      bank: r.bank,
+      bankRaw: r.bankRaw,
+      account: r.accountFull,
+      last4: r.last4,
+      amount: r.amount,
+      raw: r.raw.join('\n').trim(),
+      usable,
+      // คีย์จับคู่กับสลิป: amount|last4|bank (bank ใช้รหัสมาตรฐาน; ว่างถ้าไม่รู้จัก)
+      matchKey: r.amount != null ? `${r.amount}|${r.last4}|${r.bank || ''}` : null,
+    };
+  });
 }
 
 module.exports = { parseGroupMessage, normBank, parseAmount, parseAccount, BANK_MAP, LABELS };
