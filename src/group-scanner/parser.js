@@ -10,13 +10,14 @@ const LABELS = [
   { field: 'name',    re: /^(?:ชื่อ(?:บัญชี|ลูกค้า)?|name|acc(?:ount)?\s*name)\s*/i },
   { field: 'bank',    re: /^(?:ธนาคาร|แบงค์|bank)\s*/i },
   { field: 'account', re: /^(?:เลข(?:ที่)?บัญชี|เลขบช\.?|บัญชี(?:เลขที่)?|acc(?:ount)?(?:\s*(?:no|number))?|a\/c)\s*/i },
-  { field: 'amount',  re: /^(?:จำนวน(?:เงิน)?|ยอด(?:เงิน|โอน|ฝาก)?|เงิน|amount|amt)\s*/i },
+  // ตัด "เงิน"/"amt" เดี่ยวออก กันชนกับ "มีเงิน"/"วงเงิน" ในข้อความรายงานยอดคงเหลือ (ไม่ใช่รายการถอน)
+  { field: 'amount',  re: /^(?:จำนวน(?:เงิน)?|ยอด(?:เงิน|โอน|ฝาก|เบิก)?|amount)\s*/i },
 ];
 
 // ธนาคารไทย → รหัสมาตรฐาน (ใช้ตอน match; เติมตามที่เจอจริง)
 const BANK_MAP = [
   { code: 'KBANK', kw: ['กสิกร', 'kbank', 'kasikorn', 'k-bank', 'กสิกรไทย'] },
-  { code: 'SCB',   kw: ['ไทยพาณิชย์', 'scb', 'siam commercial'] },
+  { code: 'SCB',   kw: ['ไทยพาณิช', 'ไทยพานิช', 'scb', 'siam commercial'] }, // ครอบสะกด ณ/น + มี/ไม่มี ย์
   { code: 'BBL',   kw: ['กรุงเทพ', 'bbl', 'bangkok bank'] },
   { code: 'KTB',   kw: ['กรุงไทย', 'ktb', 'krung thai'] },
   { code: 'BAY',   kw: ['กรุงศรี', 'bay', 'ayudhya', 'krungsri'] },
@@ -77,8 +78,9 @@ function normBank(v) {
 }
 
 // record ครบพอจะจับคู่ไหม (ต้องมีอย่างน้อย amount + (account หรือ name))
+// "ข้อความปกติ" = มีครบ ยอด + เลข4ตัวท้าย + ธนาคาร(รู้จัก) — ตามที่ผู้ใช้กำหนด
 function isUsable(r) {
-  return r.amount != null && !!(r.last4 || r.name);
+  return r.amount != null && !!r.last4 && !!r.bank;
 }
 
 // ── main: text → [records] ──
@@ -88,7 +90,8 @@ function parseGroupMessage(text) {
   let cur = null;
 
   const flush = () => {
-    if (cur && (cur.amount != null || cur.last4 || cur.name || cur.user)) {
+    // เก็บเฉพาะ record ที่มี "จำนวนเงิน" — ข้อความรายงานยอด/ลิสต์บัญชี (ไม่มี label จำนวนเงิน) จะถูกทิ้ง
+    if (cur && cur.amount != null) {
       cur.usable = isUsable(cur);
       records.push(cur);
     }
