@@ -42,17 +42,38 @@ function printRec(r) {
   console.log(`  ${flag} [${r.msg_id}.${r.rec_idx}] ${r.date} ${r.time} · ยอด ${r.amount} · ${r.last4 || '----'} · ${r.bank || r.bankRaw || '-'} · "${r.name || '-'}" · key=${r.matchKey || '-'}`);
 }
 
+// หากลุ่มจาก username/id ตรงๆ ก่อน ถ้าไม่ได้ค่อยไล่ dialog list เทียบชื่อ (title มีเว้นวรรคได้)
+async function resolveGroup(client, ref) {
+  try { return await client.getEntity(ref); } catch (_) {}
+  const want = String(ref).trim().toLowerCase();
+  for await (const d of client.iterDialogs({ limit: 500 })) {
+    const title = String(d.title || d.name || '').trim().toLowerCase();
+    if (title === want || (want.length >= 4 && title.includes(want))) return d.entity;
+  }
+  return null;
+}
+
 (async () => {
   if (!apiId || !apiHash || !session) {
     console.error('❌ ต้องมี TG_API_ID / TG_API_HASH / TG_SESSION ใน .env (รัน login.js ก่อน)');
     process.exit(1);
+  }
+  // --list: โชว์กลุ่ม/แชททั้งหมดที่ account อยู่ (ช่วยหา ref ที่ถูก)
+  if (arg('list')) {
+    const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
+    await client.connect();
+    for await (const d of client.iterDialogs({ limit: 500 })) {
+      if (d.isGroup || d.isChannel) console.log(`${d.id}\t${d.title || d.name || ''}`);
+    }
+    process.exit(0);
   }
   const groupRef = arg('group');
   if (!groupRef) { console.error('❌ ระบุกลุ่ม: --group "<ชื่อหรือ username>"'); process.exit(1); }
 
   const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
   await client.connect();
-  const entity = await client.getEntity(groupRef);
+  const entity = await resolveGroup(client, groupRef);
+  if (!entity) { console.error(`❌ หากลุ่ม "${groupRef}" ไม่เจอ (ลอง --list เพื่อดูรายชื่อกลุ่มทั้งหมด)`); process.exit(1); }
   console.log(`📡 กลุ่ม: ${entity.title || groupRef} (id ${entity.id})`);
 
   const live = arg('live');
