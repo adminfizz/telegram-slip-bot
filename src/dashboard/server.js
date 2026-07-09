@@ -1578,6 +1578,78 @@ pin.focus();
     }
   });
 
+  // ── จับคู่ประกาศกลุ่ม (tab _group) กับสลิป OCR — ตรง/ขาดสลิป/เกินประกาศ (1:1 multiset) ──
+  // scope: all | day(&date=) | range(&from=&to=) | month(&month=) ; ออปชัน &last4=
+  app.get('/api/groupmatch', async (req, res) => {
+    try {
+      const scope = String(req.query.scope || 'all');
+      const date = String(req.query.date || '').slice(0, 10);
+      const from = String(req.query.from || '').slice(0, 10);
+      const to = String(req.query.to || '').slice(0, 10);
+      const month = String(req.query.month || '').slice(0, 7);
+      const last4q = /^\d{2,6}$/.test(String(req.query.last4 || '').trim()) ? String(req.query.last4).trim() : null;
+
+      let lo = null, hi = null;
+      if (scope === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(date)) { lo = date; hi = date; }
+      else if (scope === 'range') { if (/^\d{4}-\d{2}-\d{2}$/.test(from)) lo = from; if (/^\d{4}-\d{2}-\d{2}$/.test(to)) hi = to; }
+      else if (scope === 'month' && /^\d{4}-\d{2}$/.test(month)) { lo = `${month}-01`; hi = `${month}-31`; }
+      const normAcc = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+      const ctx = await ensureGoogleContext();
+      const { getGroupRecords } = require('../group-scanner/sheets-group');
+      const { normBank } = require('../group-scanner/parser');
+
+      // 1) ประกาศกลุ่มในช่วง (เฉพาะที่ครบ ยอด+บัญชี+ธนาคาร)
+      const gAll = await getGroupRecords(ctx.authClient, ctx.spreadsheetId, { from: lo, to: hi });
+      const groups = gAll.filter(g => g.usable && g.amount != null && g.last4)
+        .filter(g => !last4q || normAcc(g.last4) === normAcc(last4q))
+        .map(g => ({ date: g.date, time: g.time, amount: round2(g.amount), last4: normAcc(g.last4), bank: g.bank || '', name: g.name || '', key: g.key }));
+
+      // 2) สลิป OCR ในช่วงเดียวกัน
+      const { listTransactions } = require('../sheets');
+      const slipRaw = await listTransactions(ctx.authClient, ctx.spreadsheetId, { limit: 20000 });
+      const inRange = (d) => { const x = String(d || '').slice(0, 10); if (lo && x < lo) return false; if (hi && x > hi) return false; return true; };
+      const slips = slipRaw.map(s => {
+        const m = String(s.date || '').match(/^(\d{4}-\d{2}-\d{2})[ T]?(\d{2}:\d{2})?/);
+        return {
+          day: m ? m[1] : String(s.date || '').slice(0, 10), time: m && m[2] ? m[2] : '',
+          last4: normAcc(s.last4), recipient_last4: normAcc(s.recipient_last4), amount: round2(s.amount),
+          bank: s.bank || '', bankCode: normBank(s.bank) || '', tx_type: s.tx_type || '', hash: s.hash || '',
+        };
+      }).filter(s => s.day && inRange(s.day) && (!last4q || s.last4 === normAcc(last4q) || s.recipient_last4 === normAcc(last4q)));
+
+      // 3) จับคู่ 1:1 — key = ยอด|เลข4ตัว (เทียบ last4 ประกาศ กับ last4/ผู้รับ ของสลิป); consume ไม่ยุบซ้ำ
+      const { matchGroupSlips } = require('../group-scanner/match');
+      const { matched, missingSlip, extraSlip } = matchGroupSlips(groups, slips);
+
+      // 4) สรุปรายบัญชี (ตาม last4 ของประกาศ)
+      const accMap = new Map();
+      const bump = (l4, name, field) => { const k = l4 || '-'; let a = accMap.get(k); if (!a) { a = { last4: k, name: name || '', matched: 0, missing: 0, extra: 0 }; accMap.set(k, a); } a[field]++; if (name && !a.name) a.name = name; };
+      matched.forEach(x => bump(x.group.last4, x.group.name, 'matched'));
+      missingSlip.forEach(g => bump(g.last4, g.name, 'missing'));
+      extraSlip.forEach(s => bump(s.last4, '', 'extra'));
+      const byAccount = [...accMap.values()].sort((a, b) => (b.matched + b.missing + b.extra) - (a.matched + a.missing + a.extra));
+
+      const sum = (arr, f) => arr.reduce((t, x) => t + (f(x) || 0), 0);
+      res.json({
+        ok: true,
+        scope: { mode: scope, from: lo, to: hi },
+        summary: {
+          groupCount: groups.length, slipCount: slips.length,
+          matchedCount: matched.length, missingCount: missingSlip.length, extraCount: extraSlip.length,
+          groupTotal: sum(groups, g => g.amount), slipTotal: sum(slips, s => s.amount),
+          matchedTotal: sum(matched, x => x.group.amount),
+          missingTotal: sum(missingSlip, g => g.amount), extraTotal: sum(extraSlip, s => s.amount),
+        },
+        matched, missingSlip, extraSlip, byAccount,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      res.json({ ok: false, error: e.message || 'จับคู่ไม่สำเร็จ' });
+    }
+  });
+
   // ── เทียบยอดกับธนาคารจริง (debittrans API) — ดึง "รายการธนาคาร" มาจับคู่รายรายการกับสลิปที่บันทึก ──
   // เป็นคนละเรื่องกับ /api/reconcile (อันนั้นเทียบ "รูปที่ส่ง vs ที่ OCR บันทึก")
   // scope: all | day(&date=YYYY-MM-DD) | range(&from=&to=) | month(&month=YYYY-MM) ; ออปชัน &last4=
