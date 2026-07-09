@@ -686,8 +686,11 @@ function renderGroupMatch() {
   if (!box || !gmData) return;
   const d = gmData, sm = d.summary || {};
   const acc = document.getElementById('gmAccount')?.value || '';
+  const stFilter = document.getElementById('gmStatus')?.value || '';
   let accounts = d.accounts || [];
   if (acc) accounts = accounts.filter(a => a.last4 === acc);
+  if (stFilter === 'problem') accounts = accounts.filter(a => a.status === 'short' || a.status === 'over');
+  else if (stFilter) accounts = accounts.filter(a => a.status === stFilter);
 
   const chips = `<div class="tokchart-avg">
     💰 ยอดประกาศ <b>${fmtMoney(sm.announcedTotal)}</b> ฿ · โอนจริง <b>${fmtMoney(sm.transferredTotal)}</b> ฿ · ยังขาด <b style="color:var(--red)">${fmtMoney(sm.shortTotal)}</b> ฿<br>

@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=51" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=52" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=51">
+  <link rel="stylesheet" href="/style.css?v=52">
 </head>
 <body>
   <!-- Loading screen -->
@@ -410,7 +410,7 @@
         <div class="page-header" style="justify-content: space-between; align-items: center;">
           <div>
             <h1>🧾 จับคู่ประกาศกลุ่ม</h1>
-            <p class="subtitle">ประกาศแจ้งเบิกในกลุ่ม Telegram (Withdraw Atm) จับคู่กับสลิป OCR · ตรง / ขาดสลิป / เกินประกาศ</p>
+            <p class="subtitle">กระทบยอดต่อบัญชี — รวมยอดแจ้งเบิก vs ยอดโอนจริง (รองรับแบ่งโอนหลายใบ) · โอนครบ / ยังไม่โอน / ไม่ครบ / เกิน</p>
             <p class="live-updated" id="gmUpdatedAt"></p>
           </div>
           <div class="jobs-actions">
@@ -429,8 +429,17 @@
           <label id="gmFromWrap" style="display:none;">จาก<input type="date" id="gmFrom"></label>
           <label id="gmToWrap" style="display:none;">ถึง<input type="date" id="gmTo"></label>
           <label id="gmMonthWrap" style="display:none;">เดือน<input type="month" id="gmMonth"></label>
+          <label>สถานะ<select id="gmStatus" onchange="renderGroupMatch()">
+            <option value="">ทั้งหมด</option>
+            <option value="problem">เฉพาะที่โอนแล้วไม่ตรง (ไม่ครบ+เกิน)</option>
+            <option value="short">โอนไม่ครบ</option>
+            <option value="over">โอนเกิน</option>
+            <option value="no_slip">ยังไม่โอน</option>
+            <option value="slip_only">โอนไม่มีประกาศ</option>
+            <option value="ok">โอนครบ</option>
+          </select></label>
           <label>บัญชี<select id="gmAccount" onchange="renderGroupMatch()">
-            <option value="">ทุกบัญชี (รวม)</option>
+            <option value="">ทุกบัญชี</option>
           </select></label>
           <button class="btn btn-chip" onclick="loadGroupMatch()">จับคู่</button>
         </div>
@@ -695,6 +704,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=51"></script>
+  <script src="/app.js?v=52"></script>
 </body>
 </html>
