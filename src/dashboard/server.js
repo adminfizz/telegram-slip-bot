@@ -1580,14 +1580,13 @@ pin.focus();
 
   // ── จับคู่ประกาศกลุ่ม (tab _group) กับสลิป OCR — ตรง/ขาดสลิป/เกินประกาศ (1:1 multiset) ──
   // scope: all | day(&date=) | range(&from=&to=) | month(&month=) ; ออปชัน &last4=
-  app.get('/api/groupmatch', async (req, res) => {
-    try {
-      const scope = String(req.query.scope || 'all');
-      const date = String(req.query.date || '').slice(0, 10);
-      const from = String(req.query.from || '').slice(0, 10);
-      const to = String(req.query.to || '').slice(0, 10);
-      const month = String(req.query.month || '').slice(0, 7);
-      const last4q = /^\d{2,6}$/.test(String(req.query.last4 || '').trim()) ? String(req.query.last4).trim() : null;
+  async function computeGroupMatch(query) {
+      const scope = String(query.scope || 'all');
+      const date = String(query.date || '').slice(0, 10);
+      const from = String(query.from || '').slice(0, 10);
+      const to = String(query.to || '').slice(0, 10);
+      const month = String(query.month || '').slice(0, 7);
+      const last4q = /^\d{2,6}$/.test(String(query.last4 || '').trim()) ? String(query.last4).trim() : null;
 
       let lo = null, hi = null;
       if (scope === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(date)) { lo = date; hi = date; }
@@ -1632,8 +1631,7 @@ pin.focus();
       const byAccount = [...accMap.values()].sort((a, b) => (b.matched + b.missing + b.extra) - (a.matched + a.missing + a.extra));
 
       const sum = (arr, f) => arr.reduce((t, x) => t + (f(x) || 0), 0);
-      res.json({
-        ok: true,
+      return {
         scope: { mode: scope, from: lo, to: hi },
         summary: {
           groupCount: groups.length, slipCount: slips.length,
@@ -1644,10 +1642,40 @@ pin.focus();
         },
         matched, missingSlip, extraSlip, byAccount,
         fetchedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      res.json({ ok: false, error: e.message || 'จับคู่ไม่สำเร็จ' });
-    }
+      };
+  }
+
+  app.get('/api/groupmatch', async (req, res) => {
+    try { res.json({ ok: true, ...(await computeGroupMatch(req.query)) }); }
+    catch (e) { res.json({ ok: false, error: e.message || 'จับคู่ไม่สำเร็จ' }); }
+  });
+
+  app.get('/api/groupmatch/export-xlsx', async (req, res) => {
+    try {
+      const XLSX = require('xlsx');
+      const d = await computeGroupMatch(req.query);
+      const wb = XLSX.utils.book_new();
+      const sumRows = [['สรุป', 'จำนวน', 'ยอดรวม'],
+        ['ประกาศ', d.summary.groupCount, d.summary.groupTotal],
+        ['สลิป', d.summary.slipCount, d.summary.slipTotal],
+        ['ตรงกัน', d.summary.matchedCount, d.summary.matchedTotal],
+        ['ขาดสลิป (ประกาศไม่มีสลิป)', d.summary.missingCount, d.summary.missingTotal],
+        ['เกินประกาศ (สลิปไม่มีประกาศ)', d.summary.extraCount, d.summary.extraTotal]];
+      const mRows = [['วันที่', 'เวลา', 'ยอด', 'เลขบัญชี', 'ธนาคาร', 'ชื่อ', 'สลิป-วัน', 'สลิป-ยอด', 'สลิป-บัญชีผู้รับ']];
+      d.matched.forEach(x => mRows.push([x.group.date, x.group.time, x.group.amount, x.group.last4, x.group.bank, x.group.name, x.slip.day, x.slip.amount, x.slip.recipient_last4 || x.slip.last4]));
+      const missRows = [['วันที่', 'เวลา', 'ยอด', 'เลขบัญชี', 'ธนาคาร', 'ชื่อ']];
+      d.missingSlip.forEach(g => missRows.push([g.date, g.time, g.amount, g.last4, g.bank, g.name]));
+      const exRows = [['สลิป-วัน', 'เวลา', 'ยอด', 'บัญชี', 'ผู้รับ', 'ธนาคาร']];
+      d.extraSlip.forEach(s => exRows.push([s.day, s.time, s.amount, s.last4, s.recipient_last4, s.bankCode || s.bank]));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumRows), 'สรุป');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mRows), 'ตรงกัน');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(missRows), 'ขาดสลิป');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exRows), 'เกินประกาศ');
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="groupmatch.xlsx"');
+      res.send(buf);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
   // ── เทียบยอดกับธนาคารจริง (debittrans API) — ดึง "รายการธนาคาร" มาจับคู่รายรายการกับสลิปที่บันทึก ──

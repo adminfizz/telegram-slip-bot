@@ -278,6 +278,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (tabId === 'bankmatch') {
       bmScopeChange();
     }
+    if (tabId === 'groupmatch') {
+      gmScopeChange();
+    }
   });
 });
 
@@ -596,6 +599,143 @@ function renderBankMatch() {
 function bmPickAccount(last4) {
   const sel = document.getElementById('bmAccount');
   if (sel) { sel.value = last4; renderBankMatch(); }
+}
+
+// === จับคู่ประกาศกลุ่ม (group match) — ประกาศแจ้งเบิก vs สลิป OCR ===
+let gmData = null, gmInFlight = false;
+
+function gmScopeChange() {
+  const scope = document.getElementById('gmScope')?.value || 'month';
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('gmDateWrap', scope === 'day');
+  show('gmFromWrap', scope === 'range');
+  show('gmToWrap', scope === 'range');
+  show('gmMonthWrap', scope === 'month');
+  const now = new Date(), pad = (n) => String(n).padStart(2, '0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const setIfEmpty = (id, val) => { const el = document.getElementById(id); if (el && !el.value) el.value = val; };
+  if (scope === 'day') setIfEmpty('gmDate', today);
+  if (scope === 'month') setIfEmpty('gmMonth', today.slice(0, 7));
+  if (scope === 'range') { setIfEmpty('gmFrom', today.slice(0, 8) + '01'); setIfEmpty('gmTo', today); }
+}
+
+function gmParams() {
+  const scope = document.getElementById('gmScope')?.value || 'month';
+  const p = new URLSearchParams({ scope });
+  if (scope === 'day') p.set('date', document.getElementById('gmDate')?.value || '');
+  if (scope === 'range') { p.set('from', document.getElementById('gmFrom')?.value || ''); p.set('to', document.getElementById('gmTo')?.value || ''); }
+  if (scope === 'month') p.set('month', document.getElementById('gmMonth')?.value || '');
+  return p;
+}
+
+async function loadGroupMatch() {
+  const box = document.getElementById('gmContainer');
+  if (!box || gmInFlight) return;
+  gmInFlight = true;
+  box.innerHTML = '<div class="report-loading">⏳ กำลังจับคู่ประกาศกับสลิป...</div>';
+  try {
+    const res = await fetch('/api/groupmatch?' + gmParams().toString(), { cache: 'no-store' });
+    const d = await res.json();
+    if (!d.ok) { box.innerHTML = `<div class="info-card"><div style="color:var(--red);text-align:center;">${escHtml(d.error || 'จับคู่ไม่สำเร็จ')}</div></div>`; gmData = null; return; }
+    gmData = d;
+    populateGmAccounts(d);
+    setText('gmUpdatedAt', `อัปเดต ${d.fetchedAt ? new Date(d.fetchedAt).toLocaleString('th-TH') : ''}`);
+    renderGroupMatch();
+  } catch (_) { box.innerHTML = '<div class="info-card"><div style="color:var(--red);text-align:center;">จับคู่ไม่สำเร็จ</div></div>'; }
+  finally { gmInFlight = false; }
+}
+
+function populateGmAccounts(d) {
+  const sel = document.getElementById('gmAccount');
+  if (!sel) return;
+  const cur = sel.value;
+  const accs = (d.byAccount || []).map(a => a.last4).filter(x => x && x !== '-');
+  sel.innerHTML = '<option value="">ทุกบัญชี (รวม)</option>'
+    + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}</option>`).join('');
+  sel.value = accs.includes(cur) ? cur : '';
+}
+
+function gmPickAccount(last4) {
+  const sel = document.getElementById('gmAccount');
+  if (sel) { sel.value = last4; renderGroupMatch(); }
+}
+
+// แถวประกาศ (ขาดสลิป) / สลิป (เกินประกาศ) / ตรงกัน
+function gmGroupRow(g) {
+  return `<div class="tx-row">
+    <span>${escHtml(g.date || '')}${g.time ? ' ' + escHtml(g.time) : ''}</span>
+    <span>****${escHtml(g.last4 || '-')}</span>
+    <span>${escHtml(g.bank || '-')}</span>
+    <span>${fmtMoney(g.amount)} ฿</span>
+    <span class="acc-bank">${escHtml(g.name || '-')}</span></div>`;
+}
+function gmSlipRow(s) {
+  return `<div class="tx-row">
+    <span>${escHtml(s.day || '')}${s.time ? ' ' + escHtml(s.time) : ''}</span>
+    <span>****${escHtml(s.recipient_last4 || s.last4 || '-')}</span>
+    <span>${escHtml(s.bankCode || s.bank || '-')}</span>
+    <span>${fmtMoney(s.amount)} ฿</span>
+    <span class="acc-bank">${escHtml(s.tx_type || '')}</span></div>`;
+}
+function gmMatchRow(x) {
+  return `<div class="tx-row">
+    <span>${escHtml(x.group.date || '')}${x.group.time ? ' ' + escHtml(x.group.time) : ''}</span>
+    <span>****${escHtml(x.group.last4 || '-')}</span>
+    <span>${escHtml(x.group.bank || '-')}</span>
+    <span>${fmtMoney(x.group.amount)} ฿</span>
+    <span class="acc-bank">${escHtml(x.group.name || '-')} → สลิป ${escHtml(x.slip.day || '')}</span></div>`;
+}
+function gmList(title, arr, kind, hint) {
+  if (!arr || !arr.length) return '';
+  const rowFn = kind === 'group' ? gmGroupRow : (kind === 'slip' ? gmSlipRow : gmMatchRow);
+  const head = kind === 'match'
+    ? '<span>วัน/เวลา</span><span>บัญชี</span><span>ธนาคาร</span><span>ยอด</span><span>ชื่อ → สลิป</span>'
+    : '<span>วัน/เวลา</span><span>บัญชี</span><span>ธนาคาร</span><span>ยอด</span><span>' + (kind === 'group' ? 'ชื่อ' : 'ประเภท') + '</span>';
+  return `<div class="info-card" style="margin-top:.75rem;">
+    <h3>${title} · ${arr.length} รายการ</h3>
+    ${hint ? `<p class="subtitle">${hint}</p>` : ''}
+    <div class="tx-table bm-table"><div class="tx-row tx-head">${head}</div>
+    ${arr.map(rowFn).join('')}</div></div>`;
+}
+
+function renderGroupMatch() {
+  const box = document.getElementById('gmContainer');
+  if (!box || !gmData) return;
+  const d = gmData;
+  const acc = document.getElementById('gmAccount')?.value || '';
+  const fg = (arr) => acc ? (arr || []).filter(g => g.last4 === acc) : (arr || []);
+  const fs = (arr) => acc ? (arr || []).filter(s => s.recipient_last4 === acc || s.last4 === acc) : (arr || []);
+  const matched = (d.matched || []).filter(x => !acc || x.group.last4 === acc);
+  const missing = fg(d.missingSlip);
+  const extra = fs(d.extraSlip);
+  const sm = d.summary || {};
+  const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}` : '';
+
+  const chips = `<div class="tokchart-avg">
+    🧾 ประกาศ <b>${acc ? (matched.length + missing.length) : sm.groupCount}</b> · 📄 สลิป <b>${acc ? (matched.length + extra.length) : sm.slipCount}</b>${scopeTag}<br>
+    ✅ ตรงกัน <b>${matched.length}</b> · ⚠️ ขาดสลิป <b>${missing.length}</b> (${fmtMoney(missing.reduce((a, g) => a + (g.amount || 0), 0))} ฿) · 🟡 เกินประกาศ <b>${extra.length}</b> (${fmtMoney(extra.reduce((a, s) => a + (s.amount || 0), 0))} ฿)
+  </div>`;
+
+  let accTable = '';
+  if (!acc && (d.byAccount || []).length > 1) {
+    const rows = d.byAccount.slice(0, 40).map(a => `<div class="tx-row bm-acc-row" onclick="gmPickAccount('${escHtml(a.last4)}')" style="cursor:pointer;">
+      <span>****${escHtml(a.last4 || '-')}${a.name ? ` <span class="acc-bank">${escHtml(a.name)}</span>` : ''}</span>
+      <span>✅ ${a.matched}</span><span>⚠️ ${a.missing}</span><span>🟡 ${a.extra}</span></div>`).join('');
+    accTable = `<div class="info-card" style="margin-top:.75rem;"><h3>แยกรายบัญชี <span class="subtitle">(คลิกเพื่อดูเฉพาะบัญชี)</span></h3>
+      <div class="tx-table bm-acc-table"><div class="tx-row tx-head"><span>บัญชี</span><span>ตรงกัน</span><span>ขาดสลิป</span><span>เกินประกาศ</span></div>${rows}</div></div>`;
+  }
+
+  const empty = (matched.length + missing.length + extra.length) === 0
+    ? '<div class="info-card empty-state" style="margin-top:.75rem;">ไม่พบรายการในช่วง/บัญชีที่เลือก</div>' : '';
+
+  box.innerHTML = chips + empty + accTable
+    + gmList('⚠️ ขาดสลิป', missing, 'group', 'ประกาศแจ้งเบิก แต่ยังไม่มีสลิปโอนที่ตรงกัน')
+    + gmList('🟡 เกินประกาศ', extra, 'slip', 'มีสลิปโอน แต่ไม่เจอประกาศที่ตรงกัน')
+    + gmList('✅ ตรงกัน', matched, 'match', 'ประกาศจับคู่กับสลิปโอนได้');
+}
+
+function exportGroupXlsx() {
+  window.open('/api/groupmatch/export-xlsx?' + gmParams().toString(), '_blank');
 }
 
 // รีเช็ครายวัน (รูปที่ส่ง vs บันทึก) — แสดงในแท็บ Log
