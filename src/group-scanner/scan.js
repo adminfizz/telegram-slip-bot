@@ -105,41 +105,50 @@ async function resolveGroup(client, ref) {
     sg = require('./sheets-group');
   }
 
-  // ── backfill: ไล่ย้อนจากใหม่ไปเก่า หยุดเมื่อถึง since (ทำเสมอ; --live ใช้เป็น catch-up ก่อนฟังสด) ──
-  const collected = [];
-  let total = 0, used = 0;
-  for await (const msg of client.iterMessages(entity, { limit: undefined })) {
-    if (sinceTs && msg.date < sinceTs) break;
-    const recs = toRecords(msg);
-    if (!recs.length) continue;
-    total += recs.length;
-    used += recs.filter(r => r.usable).length;
-    if (write) collected.push(...recs); else recs.forEach(printRec);
+  // catch-up backfill (idempotent — dedup กันซ้ำ) : ไล่ย้อนจากใหม่ไปเก่า หยุดเมื่อถึง since
+  async function catchUp(reason) {
+    const collected = [];
+    let total = 0, used = 0;
+    for await (const msg of client.iterMessages(entity, { limit: undefined })) {
+      if (sinceTs && msg.date < sinceTs) break;
+      const recs = toRecords(msg);
+      if (!recs.length) continue;
+      total += recs.length;
+      used += recs.filter(r => r.usable).length;
+      if (write) collected.push(...recs); else recs.forEach(printRec);
+    }
+    if (write && collected.length) {
+      const r = await sg.appendGroupRecords(auth, spreadsheetId, collected);
+      console.log(`💾 ${reason}: +${r.added} ใหม่ · ข้ามซ้ำ ${r.skipped}`);
+    }
+    console.log(`📊 ${reason} เสร็จ: ${total} record (จับคู่ได้ ${used}, รอตรวจ ${total - used}) ตั้งแต่ ${sinceStr || 'ทั้งหมด'}`);
   }
-  if (write && collected.length) {
-    const r = await sg.appendGroupRecords(auth, spreadsheetId, collected);
-    console.log(`💾 เขียน Sheets: +${r.added} ใหม่ · ข้ามซ้ำ ${r.skipped}`);
+
+  // register live handler "ก่อน" backfill — กัน gap ช่วง backfill จบ→เริ่มฟัง (event ระหว่างนั้นเขียนได้ dedup ปลอดภัย)
+  if (live) {
+    console.log('👂 real-time: เริ่มฟังข้อความใหม่');
+    client.addEventHandler(async (event) => {
+      // try/catch — Sheets error จะไม่ crash process และไม่เงียบหาย (catch-up รอบถัดไปเก็บให้)
+      try {
+        if (!event || !event.message) return;
+        const recs = toRecords(event.message);
+        if (!recs.length) return;
+        if (write) {
+          const r = await sg.appendGroupRecords(auth, spreadsheetId, recs);
+          if (r.added) console.log(`📥 ${new Date().toLocaleString('th-TH')} · +${r.added} รายการ`);
+        } else {
+          console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec);
+        }
+      } catch (e) {
+        console.error(`⚠️ real-time เขียนไม่สำเร็จ (catch-up รอบหน้าเก็บให้): ${(e && e.message) || e}`);
+      }
+    }, new NewMessage({ chats: [entity.id] }));
   }
-  console.log(`📊 backfill เสร็จ: ${total} record (จับคู่ได้ ${used}, รอตรวจ ${total - used}) ตั้งแต่ ${sinceStr || 'ทั้งหมด'}`);
+
+  await catchUp('backfill');
 
   if (!live) { process.exit(0); }
 
-  // ── real-time: ฟังข้อความใหม่ต่อ ──
-  console.log('👂 real-time: รอข้อความใหม่... (Ctrl+C เพื่อหยุด)');
-  client.addEventHandler(async (event) => {
-    // ครอบ try/catch — ถ้า Sheets error (quota/เน็ต) จะไม่ crash process (PM2 restart→backfill วนใหม่) และไม่เงียบหาย
-    try {
-      if (!event || !event.message) return;
-      const recs = toRecords(event.message);
-      if (!recs.length) return;
-      if (write) {
-        const r = await sg.appendGroupRecords(auth, spreadsheetId, recs);
-        if (r.added) console.log(`📥 ${new Date().toLocaleString('th-TH')} · +${r.added} รายการ`);
-      } else {
-        console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec);
-      }
-    } catch (e) {
-      console.error(`⚠️ real-time เขียนไม่สำเร็จ (จะได้ตอน backfill รอบหน้า): ${(e && e.message) || e}`);
-    }
-  }, new NewMessage({ chats: [entity.id] }));
+  // safety net: catch-up ซ้ำทุก 10 นาที — เก็บ event ที่หลุด (gap/หลุดเน็ต/reconnect); idempotent ด้วย dedup
+  setInterval(() => { catchUp('catch-up').catch(e => console.error('⚠️ catch-up ล้ม:', (e && e.message) || e)); }, 10 * 60 * 1000);
 })();

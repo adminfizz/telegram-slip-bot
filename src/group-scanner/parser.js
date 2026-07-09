@@ -138,9 +138,10 @@ function parseGroupMessage(text) {
 
   // สรุป raw เป็นสตริงเดียว + คีย์จับคู่
   return records.map(r => {
-    // กันพิมพ์สลับช่อง: ธนาคารเป็นเลขยาว (≥6 หลัก) + เลขบัญชีเป็นชื่อธนาคารที่รู้จัก → สลับกลับ
+    // กันพิมพ์สลับช่อง: ช่องธนาคารเป็นเลขยาว (≥6 หลัก) และไม่ใช่ชื่อธนาคาร + ช่องเลขบัญชีเป็นชื่อธนาคารที่รู้จัก → สลับกลับ
+    // (เดิมใช้ !r.last4 → พลาดถ้าช่องบัญชีมีเลขปน เช่น "ไทยพาณิช 001"; เปลี่ยนมาเช็คว่าช่องธนาคารไม่ใช่ชื่อธนาคาร)
     const bankDigits = String(r.bankRaw || '').replace(/\D/g, '');
-    if (bankDigits.length >= 6 && !r.last4 && normBank(r.accountRaw)) {
+    if (bankDigits.length >= 6 && !normBank(r.bankRaw) && normBank(r.accountRaw)) {
       const swappedBank = r.accountRaw;
       r.accountFull = bankDigits; r.last4 = bankDigits.slice(-4);
       r.bankRaw = swappedBank; r.bank = normBank(swappedBank);
