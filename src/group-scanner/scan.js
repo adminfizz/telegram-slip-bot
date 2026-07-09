@@ -77,29 +77,49 @@ async function resolveGroup(client, ref) {
   console.log(`📡 กลุ่ม: ${entity.title || groupRef} (id ${entity.id})`);
 
   const live = arg('live');
+  const write = arg('write');
   const sinceStr = arg('since'); // YYYY-MM-DD
   const sinceTs = sinceStr ? Math.floor(new Date(sinceStr + 'T00:00:00+07:00').getTime() / 1000) : 0;
 
-  if (!live) {
-    // ── backfill: ไล่ย้อนจากใหม่ไปเก่า หยุดเมื่อถึง since ──
-    let total = 0, used = 0;
-    for await (const msg of client.iterMessages(entity, { limit: undefined })) {
-      if (sinceTs && msg.date < sinceTs) break;
-      const recs = toRecords(msg);
-      if (!recs.length) continue;
-      total += recs.length;
-      used += recs.filter(r => r.usable).length;
-      recs.forEach(printRec);
-    }
-    console.log(`\n📊 backfill เสร็จ: ${total} record (จับคู่ได้ ${used}, รอตรวจ ${total - used}) ตั้งแต่ ${sinceStr || 'ทั้งหมด'}`);
-    process.exit(0);
-  } else {
-    // ── real-time: ฟังข้อความใหม่ ──
-    console.log('👂 real-time: รอข้อความใหม่... (Ctrl+C เพื่อหยุด)');
-    client.addEventHandler((event) => {
-      const msg = event.message;
-      const recs = toRecords(msg);
-      if (recs.length) { console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec); }
-    }, new NewMessage({ chats: [entity.id] }));
+  // --write: เขียนลง Sheets (reuse auth บอท + spreadsheet เดิม)
+  let auth = null, spreadsheetId = null, sg = null;
+  if (write) {
+    const { authorize } = require('../auth');
+    auth = await authorize();
+    spreadsheetId = process.env.SPREADSHEET_ID;
+    if (!spreadsheetId) { console.error('❌ ไม่มี SPREADSHEET_ID ใน .env'); process.exit(1); }
+    sg = require('./sheets-group');
   }
+
+  // ── backfill: ไล่ย้อนจากใหม่ไปเก่า หยุดเมื่อถึง since (ทำเสมอ; --live ใช้เป็น catch-up ก่อนฟังสด) ──
+  const collected = [];
+  let total = 0, used = 0;
+  for await (const msg of client.iterMessages(entity, { limit: undefined })) {
+    if (sinceTs && msg.date < sinceTs) break;
+    const recs = toRecords(msg);
+    if (!recs.length) continue;
+    total += recs.length;
+    used += recs.filter(r => r.usable).length;
+    if (write) collected.push(...recs); else recs.forEach(printRec);
+  }
+  if (write && collected.length) {
+    const r = await sg.appendGroupRecords(auth, spreadsheetId, collected);
+    console.log(`💾 เขียน Sheets: +${r.added} ใหม่ · ข้ามซ้ำ ${r.skipped}`);
+  }
+  console.log(`📊 backfill เสร็จ: ${total} record (จับคู่ได้ ${used}, รอตรวจ ${total - used}) ตั้งแต่ ${sinceStr || 'ทั้งหมด'}`);
+
+  if (!live) { process.exit(0); }
+
+  // ── real-time: ฟังข้อความใหม่ต่อ ──
+  console.log('👂 real-time: รอข้อความใหม่... (Ctrl+C เพื่อหยุด)');
+  client.addEventHandler(async (event) => {
+    const recs = toRecords(event.message);
+    if (!recs.length) return;
+    if (write) {
+      const r = await sg.appendGroupRecords(auth, spreadsheetId, recs);
+      if (r.added) console.log(`📥 ${new Date().toLocaleString('th-TH')} · +${r.added} รายการ`);
+    } else {
+      console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec);
+    }
+  }, new NewMessage({ chats: [entity.id] }));
 })();
