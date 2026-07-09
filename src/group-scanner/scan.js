@@ -26,13 +26,14 @@ function toRecords(msg) {
   const text = msg.message || '';
   if (!text.trim()) return [];
   const recs = parseGroupMessage(text);
-  const when = new Date(msg.date * 1000);
+  // เก็บ date/time เป็นเวลาไทย (Asia/Bangkok, +7) ให้ตรงกับที่บอท OCR เก็บสลิป — กัน dayDiff/ขอบเดือนเพี้ยน
+  const bkk = new Date((msg.date + 7 * 3600) * 1000);
   return recs.map((r, idx) => ({
     ...r,
     msg_id: msg.id,
     rec_idx: idx,          // กันซ้ำเมื่อ 1 ข้อความมีหลาย record
-    date: when.toISOString().slice(0, 10),
-    time: when.toISOString().slice(11, 16),
+    date: bkk.toISOString().slice(0, 10),
+    time: bkk.toISOString().slice(11, 16),
     ts: msg.date,
   }));
 }
@@ -46,10 +47,17 @@ function printRec(r) {
 async function resolveGroup(client, ref) {
   try { return await client.getEntity(ref); } catch (_) {}
   const want = String(ref).trim().toLowerCase();
+  const exact = [], partial = [];
   for await (const d of client.iterDialogs({ limit: 500 })) {
     const title = String(d.title || d.name || '').trim().toLowerCase();
-    if (title === want || (want.length >= 4 && title.includes(want))) return d.entity;
+    if (!title) continue;
+    if (title === want) exact.push(d);
+    else if (want.length >= 4 && title.includes(want)) partial.push(d);
   }
+  if (exact.length === 1) return exact[0].entity;
+  if (exact.length > 1) throw new Error(`มีหลายกลุ่มชื่อตรงกับ "${ref}" — ระบุ username/id ให้ชัด`);
+  if (partial.length === 1) return partial[0].entity;
+  if (partial.length > 1) throw new Error(`มีหลายกลุ่มชื่อคล้าย "${ref}" (${partial.map(d => d.title).join(', ')}) — ระบุ username/id ให้ชัด`);
   return null;
 }
 
@@ -78,8 +86,14 @@ async function resolveGroup(client, ref) {
 
   const live = arg('live');
   const write = arg('write');
-  const sinceStr = arg('since'); // YYYY-MM-DD
+  const sinceRaw = arg('since'); // YYYY-MM-DD
+  const sinceStr = (sinceRaw && sinceRaw !== true) ? String(sinceRaw) : null;
+  // validate: กัน --since ไม่มีค่า/รูปแบบผิด → NaN → backfill ทั้งกลุ่มโดยไม่ตั้งใจ
+  if (sinceRaw && !/^\d{4}-\d{2}-\d{2}$/.test(sinceStr || '')) {
+    console.error(`❌ --since ต้องเป็น YYYY-MM-DD (ได้: ${sinceRaw})`); process.exit(1);
+  }
   const sinceTs = sinceStr ? Math.floor(new Date(sinceStr + 'T00:00:00+07:00').getTime() / 1000) : 0;
+  if (sinceStr && !Number.isFinite(sinceTs)) { console.error('❌ --since แปลงเป็นวันที่ไม่ได้'); process.exit(1); }
 
   // --write: เขียนลง Sheets (reuse auth บอท + spreadsheet เดิม)
   let auth = null, spreadsheetId = null, sg = null;
@@ -113,13 +127,19 @@ async function resolveGroup(client, ref) {
   // ── real-time: ฟังข้อความใหม่ต่อ ──
   console.log('👂 real-time: รอข้อความใหม่... (Ctrl+C เพื่อหยุด)');
   client.addEventHandler(async (event) => {
-    const recs = toRecords(event.message);
-    if (!recs.length) return;
-    if (write) {
-      const r = await sg.appendGroupRecords(auth, spreadsheetId, recs);
-      if (r.added) console.log(`📥 ${new Date().toLocaleString('th-TH')} · +${r.added} รายการ`);
-    } else {
-      console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec);
+    // ครอบ try/catch — ถ้า Sheets error (quota/เน็ต) จะไม่ crash process (PM2 restart→backfill วนใหม่) และไม่เงียบหาย
+    try {
+      if (!event || !event.message) return;
+      const recs = toRecords(event.message);
+      if (!recs.length) return;
+      if (write) {
+        const r = await sg.appendGroupRecords(auth, spreadsheetId, recs);
+        if (r.added) console.log(`📥 ${new Date().toLocaleString('th-TH')} · +${r.added} รายการ`);
+      } else {
+        console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec);
+      }
+    } catch (e) {
+      console.error(`⚠️ real-time เขียนไม่สำเร็จ (จะได้ตอน backfill รอบหน้า): ${(e && e.message) || e}`);
     }
   }, new NewMessage({ chats: [entity.id] }));
 })();

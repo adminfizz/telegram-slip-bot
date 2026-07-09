@@ -1,21 +1,29 @@
 // match.js — จับคู่ประกาศกลุ่ม ↔ สลิป OCR แบบ 1:1 multiset (ไม่ยุบซ้ำ)
-// key = ยอด|เลข4ตัวท้าย ; เทียบ last4 ประกาศ กับทั้ง last4 และ recipient_last4 ของสลิป
-// (เงินโอนถึงลูกค้า — เลขบัญชีในประกาศอาจตรงกับผู้รับหรือบัญชีหลักของสลิป)
-// groups: [{amount,last4,...}] · slips: [{amount,last4,recipient_last4,...}]
+// key = ยอด|เลข4ตัวท้าย ; เทียบ last4 ประกาศ กับ recipient_last4 (บัญชีผู้รับ) ของสลิปเท่านั้น
+// (เงินโอนถึงลูกค้า — ยืนยันแล้วว่า last4 ต้นทางของสลิปไม่เคยตรงประกาศ; การ key ด้วย last4 ต้นทางด้วย
+//  ทำให้สลิปอยู่ 2 bucket → greedy strand match ผิด. จับด้วยผู้รับอย่างเดียว = ตรง domain + 1 slip อยู่ 1 bucket)
+// groups: [{amount,last4,date,...}] · slips: [{amount,recipient_last4,day,...}]
 function matchGroupSlips(groups, slips) {
   const used = new Array(slips.length).fill(false);
   const idxByKey = new Map();
   slips.forEach((s, i) => {
-    for (const acc of new Set([s.last4, s.recipient_last4].filter(Boolean))) {
-      const k = s.amount + '|' + acc;
-      if (!idxByKey.has(k)) idxByKey.set(k, []);
-      idxByKey.get(k).push(i);
-    }
+    const acc = s.recipient_last4; // สลิปถอน ATM ไม่มีผู้รับ → ไม่เข้า bucket → ไม่จับกับประกาศ (ถูกต้อง)
+    if (!acc) return;
+    const k = s.amount + '|' + acc;
+    if (!idxByKey.has(k)) idxByKey.set(k, []);
+    idxByKey.get(k).push(i);
   });
-  // จับคู่ตามลำดับวันของประกาศ; แต่ละประกาศเลือกสลิปยอด+บัญชีตรง "วันใกล้ที่สุด" ที่ยังไม่ถูกใช้
+  // วันเป็นตัวเลข (คืน null ถ้าแปลงไม่ได้ — ไม่ปน epoch 0 ที่ทำ sort/proximity เพี้ยน)
+  const dnum = d => { const t = Date.parse(String(d || '').slice(0, 10)); return isNaN(t) ? null : t / 86400000; };
+  // จับคู่ตามลำดับวันของประกาศ (วันเสียไปท้าย); แต่ละประกาศเลือกสลิปยอด+ผู้รับตรง "วันใกล้ที่สุด" ที่ยังไม่ถูกใช้
   // → 2 ประกาศยอดเดียวกันคนละวัน จับสลิปคนละใบถูกวัน (1:1 ไม่ยุบซ้ำ)
-  const dnum = d => { const t = Date.parse(String(d || '').slice(0, 10)); return isNaN(t) ? 0 : t / 86400000; };
-  const ordered = [...groups].sort((a, b) => dnum(a.date) - dnum(b.date));
+  const ordered = [...groups].sort((a, b) => {
+    const da = dnum(a.date), db = dnum(b.date);
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return da - db;
+  });
   const matched = [], missingSlip = [];
   for (const g of ordered) {
     const lst = idxByKey.get(g.amount + '|' + g.last4) || [];
@@ -23,7 +31,9 @@ function matchGroupSlips(groups, slips) {
     let best = -1, bestDiff = Infinity;
     for (const i of lst) {
       if (used[i]) continue;
-      const diff = Math.abs(dnum(slips[i].day) - gd);
+      const sd = dnum(slips[i].day);
+      // ถ้าวันฝั่งใดฝั่งหนึ่งเสีย → ถือ diff = 0 (เลือกตัวแรกที่ว่าง ไม่ลงโทษด้วยระยะปลอม)
+      const diff = (gd == null || sd == null) ? 0 : Math.abs(sd - gd);
       if (diff < bestDiff) { bestDiff = diff; best = i; if (diff === 0) break; }
     }
     if (best >= 0) { used[best] = true; matched.push({ group: g, slip: slips[best], dayDiff: bestDiff }); }

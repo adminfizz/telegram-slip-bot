@@ -10,8 +10,8 @@ const LABELS = [
   { field: 'name',    re: /^(?:ชื่อ(?:บัญชี|ลูกค้า)?|name|acc(?:ount)?\s*name)\s*/i },
   { field: 'bank',    re: /^(?:ธนาคาร|แบงค์|bank)\s*/i },
   { field: 'account', re: /^(?:เลข(?:ที่)?บัญชี|เลขบช\.?|บัญชี(?:เลขที่)?|acc(?:ount)?(?:\s*(?:no|number))?|a\/c)\s*/i },
-  // ตัด "เงิน"/"amt" เดี่ยวออก กันชนกับ "มีเงิน"/"วงเงิน" ในข้อความรายงานยอดคงเหลือ (ไม่ใช่รายการถอน)
-  { field: 'amount',  re: /^(?:จำนวน(?:เงิน)?|ยอด(?:เงิน|โอน|ฝาก|เบิก)?|amount)\s*/i },
+  // ตัด "เงิน"/"amt" เดี่ยวออก กันชน "มีเงิน"/"วงเงิน"; + กัน "ยอดคงเหลือ/ยอดรวม/ยอดใช้/ยอดยกมา" (รายงานยอด ไม่ใช่รายการเบิก)
+  { field: 'amount',  re: /^(?:จำนวน(?:เงิน)?|ยอด(?!คงเหลือ|รวม|ใช้|ยกมา|สะสม)(?:เงิน|โอน|ฝาก|เบิก)?|amount)\s*/i },
 ];
 
 // ธนาคารไทย → รหัสมาตรฐาน (ใช้ตอน match; เติมตามที่เจอจริง)
@@ -120,6 +120,7 @@ function parseGroupMessage(text) {
       (hit.field === 'account' && cur.accountFull) ||
       (hit.field === 'amount' && cur.amount != null) ||
       (hit.field === 'bank' && cur.bankRaw) ||
+      (hit.field === 'company' && cur.company) ||
       (hit.field === 'user' && cur.user);
     if (already) { flush(); cur = fresh(); }
 

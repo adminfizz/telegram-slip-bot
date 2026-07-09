@@ -641,7 +641,7 @@ async function loadGroupMatch() {
     populateGmAccounts(d);
     setText('gmUpdatedAt', `อัปเดต ${d.fetchedAt ? new Date(d.fetchedAt).toLocaleString('th-TH') : ''}`);
     renderGroupMatch();
-  } catch (_) { box.innerHTML = '<div class="info-card"><div style="color:var(--red);text-align:center;">จับคู่ไม่สำเร็จ</div></div>'; }
+  } catch (_) { gmData = null; box.innerHTML = '<div class="info-card"><div style="color:var(--red);text-align:center;">จับคู่ไม่สำเร็จ</div></div>'; }
   finally { gmInFlight = false; }
 }
 
@@ -678,12 +678,13 @@ function gmSlipRow(s) {
     <span class="acc-bank">${escHtml(s.tx_type || '')}</span></div>`;
 }
 function gmMatchRow(x) {
+  const g = x.group || {}, s = x.slip || {};
   return `<div class="tx-row">
-    <span>${escHtml(x.group.date || '')}${x.group.time ? ' ' + escHtml(x.group.time) : ''}</span>
-    <span>****${escHtml(x.group.last4 || '-')}</span>
-    <span>${escHtml(x.group.bank || '-')}</span>
-    <span>${fmtMoney(x.group.amount)} ฿</span>
-    <span class="acc-bank">${escHtml(x.group.name || '-')} → สลิป ${escHtml(x.slip.day || '')}</span></div>`;
+    <span>${escHtml(g.date || '')}${g.time ? ' ' + escHtml(g.time) : ''}</span>
+    <span>****${escHtml(g.last4 || '-')}</span>
+    <span>${escHtml(g.bank || '-')}</span>
+    <span>${fmtMoney(g.amount)} ฿</span>
+    <span class="acc-bank">${escHtml(g.name || '-')} → สลิป ${escHtml(s.day || '')}</span></div>`;
 }
 function gmList(title, arr, kind, hint) {
   if (!arr || !arr.length) return '';
@@ -713,9 +714,9 @@ function renderGroupMatch() {
   const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}` : '';
 
   const chips = `<div class="tokchart-avg">
-    🧾 ประกาศ <b>${acc ? (matched.length + missing.length) : sm.groupCount}</b> · 📄 สลิป <b>${acc ? (matched.length + extraT.length + extraW.length) : sm.slipCount}</b>${scopeTag}<br>
-    ✅ ตรงกัน <b>${matched.length}</b> · ⚠️ ขาดสลิป <b>${missing.length}</b> (${fmtMoney(missing.reduce((a, g) => a + (g.amount || 0), 0))} ฿)<br>
-    🟡 สลิปโอนไม่มีประกาศ <b>${extraT.length}</b> (${fmtMoney(extraT.reduce((a, s) => a + (s.amount || 0), 0))} ฿) · 🏧 ถอน ATM ไม่มีผู้รับ <b>${extraW.length}</b> <span class="acc-bank">(ปกติ)</span>
+    🧾 ประกาศ <b>${acc ? (matched.length + missing.length) : (sm.groupCount ?? 0)}</b> · 📄 สลิป <b>${acc ? (matched.length + extraT.length + extraW.length) : (sm.slipCount ?? 0)}</b>${scopeTag}<br>
+    ✅ ตรงกัน <b>${matched.length}</b> · ⚠️ ขาดสลิป <b>${missing.length}</b> (${fmtMoney(missing.reduce((a, g) => a + (Number(g.amount) || 0), 0))} ฿)<br>
+    🟡 สลิปโอนไม่มีประกาศ <b>${extraT.length}</b> (${fmtMoney(extraT.reduce((a, s) => a + (Number(s.amount) || 0), 0))} ฿) · 🏧 ถอน ATM ไม่มีผู้รับ <b>${extraW.length}</b> <span class="acc-bank">(ปกติ)</span>
   </div>`;
 
   let accTable = '';

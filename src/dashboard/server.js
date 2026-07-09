@@ -1587,12 +1587,26 @@ pin.focus();
       const to = String(query.to || '').slice(0, 10);
       const month = String(query.month || '').slice(0, 7);
       const last4q = /^\d{2,6}$/.test(String(query.last4 || '').trim()) ? String(query.last4).trim() : null;
+      const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+      const isMonth = (s) => /^\d{4}-(0[1-9]|1[0-2])$/.test(s); // เดือน 01-12 เท่านั้น (กัน 2026-13)
 
+      // scope ต้องรู้จัก + พารามิเตอร์ต้องถูกฟอร์แมต ไม่งั้น error (กัน scope แปลก/วันเพี้ยน → เผลอ dump ทั้งหมด)
       let lo = null, hi = null;
-      if (scope === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(date)) { lo = date; hi = date; }
-      else if (scope === 'range') { if (/^\d{4}-\d{2}-\d{2}$/.test(from)) lo = from; if (/^\d{4}-\d{2}-\d{2}$/.test(to)) hi = to; }
-      else if (scope === 'month' && /^\d{4}-\d{2}$/.test(month)) { lo = `${month}-01`; hi = `${month}-31`; }
-      const normAcc = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+      if (scope === 'day') {
+        if (!isDay(date)) throw new Error('date ต้องเป็น YYYY-MM-DD');
+        lo = date; hi = date;
+      } else if (scope === 'range') {
+        if (!isDay(from) || !isDay(to)) throw new Error('from/to ต้องเป็น YYYY-MM-DD');
+        lo = from; hi = to;
+        if (lo > hi) { const t = lo; lo = hi; hi = t; } // สลับให้ถูกถ้าใส่กลับด้าน
+      } else if (scope === 'month') {
+        if (!isMonth(month)) throw new Error('month ต้องเป็น YYYY-MM (01-12)');
+        lo = `${month}-01`; hi = `${month}-31`;
+      } else if (scope !== 'all') {
+        throw new Error('scope ไม่ถูกต้อง (all|day|range|month)');
+      }
+      // เลข 4 ตัวท้ายเป็นมาตรฐาน 4 หลัก (pad ศูนย์นำ) — ตรงทั้งจับคู่และแสดงผล กัน 0906↔906 เพี้ยน
+      const normAcc = (v) => { const d = String(v == null ? '' : v).replace(/\D/g, ''); return d ? d.slice(-4).padStart(4, '0') : ''; };
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
       const ctx = await ensureGoogleContext();
