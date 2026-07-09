@@ -105,50 +105,39 @@ async function resolveGroup(client, ref) {
     sg = require('./sheets-group');
   }
 
-  // catch-up backfill (idempotent — dedup กันซ้ำ) : ไล่ย้อนจากใหม่ไปเก่า หยุดเมื่อถึง since
-  async function catchUp(reason) {
+  // ── ไม่ใช่ real-time: สแกนเป็นรอบ + เขียนทับ (รองรับประกาศ แก้ไข/ลบ) ──
+  const GRACE_MIN = Number(process.env.GROUP_GRACE_MIN || 10);       // ข้ามข้อความที่เพิ่งโพสต์/แก้ (ยังไม่นิ่ง)
+  const SCAN_INTERVAL_MIN = Number(process.env.GROUP_SCAN_MIN || 30); // สแกนซ้ำทุกกี่นาที
+  const graceSec = Math.max(0, GRACE_MIN) * 60;
+
+  // สแกน 1 รอบ: ดึงข้อความในเดือน (ตั้งแต่ since) ที่ "นิ่งแล้ว" (อายุเกิน grace) → เขียนทับเฉพาะช่วงนั้น
+  //   เขียนทับด้วยสถานะปัจจุบันของกลุ่ม → แก้ไข = ยอดใหม่ทับ, ลบ = หายจากชีต (เดือนก่อนไม่แตะ)
+  async function scanCycle(reason) {
+    const nowSec = Math.floor(Date.now() / 1000);
     const collected = [];
-    let total = 0, used = 0;
+    let total = 0, used = 0, young = 0;
     for await (const msg of client.iterMessages(entity, { limit: undefined })) {
       if (sinceTs && msg.date < sinceTs) break;
+      // grace: ใช้ editDate ถ้าถูกแก้ — ข้ามถ้ายังไม่เกิน grace (เผื่อยังแก้อีก)
+      const finalTs = msg.editDate || msg.date;
+      if (nowSec - finalTs < graceSec) { young++; continue; }
       const recs = toRecords(msg);
       if (!recs.length) continue;
       total += recs.length;
       used += recs.filter(r => r.usable).length;
       if (write) collected.push(...recs); else recs.forEach(printRec);
     }
-    if (write && collected.length) {
-      const r = await sg.appendGroupRecords(auth, spreadsheetId, collected);
-      console.log(`💾 ${reason}: +${r.added} ใหม่ · ข้ามซ้ำ ${r.skipped}`);
+    if (write) {
+      const r = await sg.replaceGroupRecordsInRange(auth, spreadsheetId, collected, sinceStr);
+      if (r.skipped) console.log(`⚠️ ${reason}: ${r.reason}`);
+      else console.log(`💾 ${reason}: เขียนทับ ${r.replaced} · คงเดือนก่อน ${r.kept} · ลบ/หาย ${r.removed} · รอนิ่ง ${young} ข้อความ`);
     }
-    console.log(`📊 ${reason} เสร็จ: ${total} record (จับคู่ได้ ${used}, รอตรวจ ${total - used}) ตั้งแต่ ${sinceStr || 'ทั้งหมด'}`);
+    console.log(`📊 ${reason}: ${total} record (จับคู่ได้ ${used}) ตั้งแต่ ${sinceStr || 'ทั้งหมด'} · grace ${GRACE_MIN} นาที`);
   }
 
-  // register live handler "ก่อน" backfill — กัน gap ช่วง backfill จบ→เริ่มฟัง (event ระหว่างนั้นเขียนได้ dedup ปลอดภัย)
-  if (live) {
-    console.log('👂 real-time: เริ่มฟังข้อความใหม่');
-    client.addEventHandler(async (event) => {
-      // try/catch — Sheets error จะไม่ crash process และไม่เงียบหาย (catch-up รอบถัดไปเก็บให้)
-      try {
-        if (!event || !event.message) return;
-        const recs = toRecords(event.message);
-        if (!recs.length) return;
-        if (write) {
-          const r = await sg.appendGroupRecords(auth, spreadsheetId, recs);
-          if (r.added) console.log(`📥 ${new Date().toLocaleString('th-TH')} · +${r.added} รายการ`);
-        } else {
-          console.log(`\n📥 ข้อความใหม่ ${new Date().toLocaleString('th-TH')}`); recs.forEach(printRec);
-        }
-      } catch (e) {
-        console.error(`⚠️ real-time เขียนไม่สำเร็จ (catch-up รอบหน้าเก็บให้): ${(e && e.message) || e}`);
-      }
-    }, new NewMessage({ chats: [entity.id] }));
-  }
-
-  await catchUp('backfill');
-
+  await scanCycle('สแกนรอบแรก');
   if (!live) { process.exit(0); }
 
-  // safety net: catch-up ซ้ำทุก 10 นาที — เก็บ event ที่หลุด (gap/หลุดเน็ต/reconnect); idempotent ด้วย dedup
-  setInterval(() => { catchUp('catch-up').catch(e => console.error('⚠️ catch-up ล้ม:', (e && e.message) || e)); }, 10 * 60 * 1000);
+  console.log(`⏰ สแกนอัตโนมัติทุก ${SCAN_INTERVAL_MIN} นาที (ไม่ใช่ real-time — ให้ประกาศแก้ไข/ลบ นิ่งก่อนค่อยจับ)`);
+  setInterval(() => { scanCycle('สแกนรอบใหม่').catch(e => console.error('⚠️ สแกนล้ม:', (e && e.message) || e)); }, SCAN_INTERVAL_MIN * 60 * 1000);
 })();

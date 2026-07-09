@@ -77,6 +77,58 @@ async function _appendGroupRecords(auth, spreadsheetId, records) {
   return { added: rows.length, skipped };
 }
 
+// สร้างแถว (13 คอลัมน์ A-M) จาก record เดียว
+function rowOf(r) {
+  return [
+    `${r.msg_id}.${r.rec_idx}`, r.date || '', r.time || '', String(r.ts || ''),
+    r.name || '', r.bank || r.bankRaw || '', r.account || '', r.last4 || '',
+    r.amount == null ? '' : r.amount, r.user || '', r.company || '',
+    r.usable ? '1' : '0', (r.raw || '').slice(0, 500),
+  ];
+}
+
+// เขียนทับ "เฉพาะช่วง date >= sinceDate" ด้วย records ล่าสุด — คงแถวเดือนก่อน (date < since) ไว้
+// รองรับ แก้ไข (ยอดเปลี่ยน→ทับ) + ลบ (หายจาก records→หายจากชีต) โดยไม่แตะข้อมูลนอกช่วง
+// safety: ถ้า records ว่างทั้งที่มีของเดิมในช่วง = สแกนน่าจะพลาด → ไม่เขียนทับ (กันข้อมูลหาย)
+async function replaceGroupRecordsInRange(auth, spreadsheetId, records, sinceDate) {
+  const run = writeChain.then(() => _replaceInRange(auth, spreadsheetId, records, sinceDate));
+  writeChain = run.catch(() => {});
+  return run;
+}
+
+async function _replaceInRange(auth, spreadsheetId, records, sinceDate) {
+  await ensureGroupTab(auth, spreadsheetId);
+  const sheets = client(auth);
+  let existing = [];
+  try {
+    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TAB}!A2:M`, valueRenderOption: 'UNFORMATTED_VALUE' });
+    existing = (r.data.values || []).map(row => row.map(c => (c == null ? '' : String(c))));
+  } catch (_) {}
+  const dateOf = row => String(row[1] || '');
+  const keep = sinceDate ? existing.filter(row => dateOf(row) && dateOf(row) < sinceDate) : [];
+  const inRangeOld = existing.length - keep.length;
+  // safety guard: สแกนได้ 0 แต่ของเดิมในช่วงมีเยอะ = พลาด → ไม่เขียนทับ
+  if (records.length === 0 && inRangeOld > 5) {
+    return { skipped: true, reason: `guard: สแกนได้ 0 record แต่ของเดิมในช่วงมี ${inRangeOld} — ไม่เขียนทับ` };
+  }
+  const newRows = records.map(rowOf);
+  const allRows = [...keep, ...newRows];
+  // เขียนทับจาก A2 (update ก่อน—ไม่มี gap ว่าง) แล้ว clear ส่วนเกิน (ถ้าของเดิมยาวกว่า)
+  if (allRows.length) {
+    for (let i = 0; i < allRows.length; i += 500) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId, range: `${TAB}!A${i + 2}`, valueInputOption: 'RAW',
+        resource: { values: allRows.slice(i, i + 500) },
+      });
+    }
+  }
+  if (existing.length > allRows.length) {
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${TAB}!A${allRows.length + 2}:M${existing.length + 1}` });
+  }
+  keyCache.set(spreadsheetId, new Set(allRows.map(row => String(row[0]))));
+  return { total: allRows.length, kept: keep.length, replaced: newRows.length, removed: Math.max(0, inRangeOld - newRows.length) };
+}
+
 // อ่าน record ในช่วงเวลา (from/to = YYYY-MM-DD inclusive; ไม่ใส่ = ทั้งหมด)
 async function getGroupRecords(auth, spreadsheetId, { from = null, to = null } = {}) {
   const sheets = client(auth);
@@ -102,4 +154,4 @@ async function getGroupRecords(auth, spreadsheetId, { from = null, to = null } =
   return out;
 }
 
-module.exports = { ensureGroupTab, appendGroupRecords, getGroupRecords, TAB, HEADER };
+module.exports = { ensureGroupTab, appendGroupRecords, replaceGroupRecordsInRange, getGroupRecords, TAB, HEADER };
