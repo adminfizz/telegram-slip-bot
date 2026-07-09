@@ -105,7 +105,8 @@ function parseGroupMessage(text) {
   });
 
   for (const rawLine of rawLines) {
-    const line = clean(rawLine);
+    // ตัดเลขลำดับนำหน้า "1." "2)" "15. " ออก — ประกาศแบบลิสต์รวม "1. ชื่อ : X" จะได้จับ label "ชื่อ" ถูก (กันชื่อหาย)
+    const line = clean(rawLine).replace(/^\d{1,3}[.)]\s*/, '');
     if (!line) continue;
     const hit = matchLabel(line);
     if (!hit) {
