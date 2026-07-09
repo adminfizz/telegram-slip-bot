@@ -1627,7 +1627,8 @@ pin.focus();
       const bump = (l4, name, field) => { const k = l4 || '-'; let a = accMap.get(k); if (!a) { a = { last4: k, name: name || '', matched: 0, missing: 0, extra: 0 }; accMap.set(k, a); } a[field]++; if (name && !a.name) a.name = name; };
       matched.forEach(x => bump(x.group.last4, x.group.name, 'matched'));
       missingSlip.forEach(g => bump(g.last4, g.name, 'missing'));
-      extraSlip.forEach(s => bump(s.last4, '', 'extra'));
+      // เกินประกาศ: จัดกลุ่มด้วยบัญชีผู้รับ (recipient) ให้ตรง scope กับประกาศ ไม่ใช่บัญชีต้นทางสลิป
+      extraSlip.forEach(s => bump(s.recipient_last4 || s.last4, '', 'extra'));
       const byAccount = [...accMap.values()].sort((a, b) => (b.matched + b.missing + b.extra) - (a.matched + a.missing + a.extra));
 
       const sum = (arr, f) => arr.reduce((t, x) => t + (f(x) || 0), 0);
