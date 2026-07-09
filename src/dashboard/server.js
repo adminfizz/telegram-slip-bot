@@ -1632,16 +1632,21 @@ pin.focus();
       const byAccount = [...accMap.values()].sort((a, b) => (b.matched + b.missing + b.extra) - (a.matched + a.missing + a.extra));
 
       const sum = (arr, f) => arr.reduce((t, x) => t + (f(x) || 0), 0);
+      // แยกเกินประกาศ: มีเลขผู้รับ = สลิปโอนไม่มีประกาศ (ควรตรวจ) · ไม่มีผู้รับ = ถอน ATM (ปกติ)
+      const extraTransfer = extraSlip.filter(s => s.recipient_last4);
+      const extraWithdraw = extraSlip.filter(s => !s.recipient_last4);
       return {
         scope: { mode: scope, from: lo, to: hi },
         summary: {
           groupCount: groups.length, slipCount: slips.length,
           matchedCount: matched.length, missingCount: missingSlip.length, extraCount: extraSlip.length,
+          extraTransferCount: extraTransfer.length, extraWithdrawCount: extraWithdraw.length,
           groupTotal: sum(groups, g => g.amount), slipTotal: sum(slips, s => s.amount),
           matchedTotal: sum(matched, x => x.group.amount),
           missingTotal: sum(missingSlip, g => g.amount), extraTotal: sum(extraSlip, s => s.amount),
+          extraTransferTotal: sum(extraTransfer, s => s.amount), extraWithdrawTotal: sum(extraWithdraw, s => s.amount),
         },
-        matched, missingSlip, extraSlip, byAccount,
+        matched, missingSlip, extraSlip, extraTransfer, extraWithdraw, byAccount,
         fetchedAt: new Date().toISOString(),
       };
   }
@@ -1661,17 +1666,21 @@ pin.focus();
         ['สลิป', d.summary.slipCount, d.summary.slipTotal],
         ['ตรงกัน', d.summary.matchedCount, d.summary.matchedTotal],
         ['ขาดสลิป (ประกาศไม่มีสลิป)', d.summary.missingCount, d.summary.missingTotal],
-        ['เกินประกาศ (สลิปไม่มีประกาศ)', d.summary.extraCount, d.summary.extraTotal]];
+        ['สลิปโอนไม่มีประกาศ (ควรตรวจ)', d.summary.extraTransferCount, d.summary.extraTransferTotal],
+        ['ถอน ATM ไม่มีผู้รับ (ปกติ)', d.summary.extraWithdrawCount, d.summary.extraWithdrawTotal]];
       const mRows = [['วันที่', 'เวลา', 'ยอด', 'เลขบัญชี', 'ธนาคาร', 'ชื่อ', 'สลิป-วัน', 'สลิป-ยอด', 'สลิป-บัญชีผู้รับ']];
       d.matched.forEach(x => mRows.push([x.group.date, x.group.time, x.group.amount, x.group.last4, x.group.bank, x.group.name, x.slip.day, x.slip.amount, x.slip.recipient_last4 || x.slip.last4]));
       const missRows = [['วันที่', 'เวลา', 'ยอด', 'เลขบัญชี', 'ธนาคาร', 'ชื่อ']];
       d.missingSlip.forEach(g => missRows.push([g.date, g.time, g.amount, g.last4, g.bank, g.name]));
-      const exRows = [['สลิป-วัน', 'เวลา', 'ยอด', 'บัญชี', 'ผู้รับ', 'ธนาคาร']];
-      d.extraSlip.forEach(s => exRows.push([s.day, s.time, s.amount, s.last4, s.recipient_last4, s.bankCode || s.bank]));
+      const exTRows = [['สลิป-วัน', 'เวลา', 'ยอด', 'บัญชี', 'ผู้รับ', 'ธนาคาร']];
+      (d.extraTransfer || []).forEach(s => exTRows.push([s.day, s.time, s.amount, s.last4, s.recipient_last4, s.bankCode || s.bank]));
+      const exWRows = [['สลิป-วัน', 'เวลา', 'ยอด', 'บัญชี', 'ธนาคาร']];
+      (d.extraWithdraw || []).forEach(s => exWRows.push([s.day, s.time, s.amount, s.last4, s.bankCode || s.bank]));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumRows), 'สรุป');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mRows), 'ตรงกัน');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(missRows), 'ขาดสลิป');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exRows), 'เกินประกาศ');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exTRows), 'สลิปโอนไม่มีประกาศ');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exWRows), 'ถอน ATM');
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="groupmatch.xlsx"');

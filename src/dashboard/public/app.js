@@ -707,13 +707,15 @@ function renderGroupMatch() {
   const fs = (arr) => acc ? (arr || []).filter(s => s.recipient_last4 === acc || s.last4 === acc) : (arr || []);
   const matched = (d.matched || []).filter(x => !acc || x.group.last4 === acc);
   const missing = fg(d.missingSlip);
-  const extra = fs(d.extraSlip);
+  const extraT = fs(d.extraTransfer || []);
+  const extraW = fs(d.extraWithdraw || []);
   const sm = d.summary || {};
   const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}` : '';
 
   const chips = `<div class="tokchart-avg">
-    🧾 ประกาศ <b>${acc ? (matched.length + missing.length) : sm.groupCount}</b> · 📄 สลิป <b>${acc ? (matched.length + extra.length) : sm.slipCount}</b>${scopeTag}<br>
-    ✅ ตรงกัน <b>${matched.length}</b> · ⚠️ ขาดสลิป <b>${missing.length}</b> (${fmtMoney(missing.reduce((a, g) => a + (g.amount || 0), 0))} ฿) · 🟡 เกินประกาศ <b>${extra.length}</b> (${fmtMoney(extra.reduce((a, s) => a + (s.amount || 0), 0))} ฿)
+    🧾 ประกาศ <b>${acc ? (matched.length + missing.length) : sm.groupCount}</b> · 📄 สลิป <b>${acc ? (matched.length + extraT.length + extraW.length) : sm.slipCount}</b>${scopeTag}<br>
+    ✅ ตรงกัน <b>${matched.length}</b> · ⚠️ ขาดสลิป <b>${missing.length}</b> (${fmtMoney(missing.reduce((a, g) => a + (g.amount || 0), 0))} ฿)<br>
+    🟡 สลิปโอนไม่มีประกาศ <b>${extraT.length}</b> (${fmtMoney(extraT.reduce((a, s) => a + (s.amount || 0), 0))} ฿) · 🏧 ถอน ATM ไม่มีผู้รับ <b>${extraW.length}</b> <span class="acc-bank">(ปกติ)</span>
   </div>`;
 
   let accTable = '';
@@ -725,12 +727,13 @@ function renderGroupMatch() {
       <div class="tx-table bm-acc-table"><div class="tx-row tx-head"><span>บัญชี</span><span>ตรงกัน</span><span>ขาดสลิป</span><span>เกินประกาศ</span></div>${rows}</div></div>`;
   }
 
-  const empty = (matched.length + missing.length + extra.length) === 0
+  const empty = (matched.length + missing.length + extraT.length + extraW.length) === 0
     ? '<div class="info-card empty-state" style="margin-top:.75rem;">ไม่พบรายการในช่วง/บัญชีที่เลือก</div>' : '';
 
   box.innerHTML = chips + empty + accTable
     + gmList('⚠️ ขาดสลิป', missing, 'group', 'ประกาศแจ้งเบิก แต่ยังไม่มีสลิปโอนที่ตรงกัน')
-    + gmList('🟡 เกินประกาศ', extra, 'slip', 'มีสลิปโอน แต่ไม่เจอประกาศที่ตรงกัน')
+    + gmList('🟡 สลิปโอนไม่มีประกาศ', extraT, 'slip', 'มีสลิปโอน แต่ไม่เจอประกาศที่ตรงกัน — ควรตรวจ')
+    + gmList('🏧 ถอน ATM (ไม่มีผู้รับ)', extraW, 'slip', 'สลิปถอนเงินสด ไม่มีเลขผู้รับ — ปกติไม่ผูกกับประกาศ')
     + gmList('✅ ตรงกัน', matched, 'match', 'ประกาศจับคู่กับสลิปโอนได้');
 }
 
