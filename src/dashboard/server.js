@@ -1632,35 +1632,57 @@ pin.focus();
         };
       }).filter(s => s.day && inRange(s.day) && (!last4q || s.last4 === normAcc(last4q) || s.recipient_last4 === normAcc(last4q)));
 
-      // 3) จับคู่ 1:1 — key = ยอด|เลข4ตัว (เทียบ last4 ประกาศ กับ last4/ผู้รับ ของสลิป); consume ไม่ยุบซ้ำ
-      const { matchGroupSlips } = require('../group-scanner/match');
-      const { matched, missingSlip, extraSlip } = matchGroupSlips(groups, slips);
+      // 3) กระทบยอด "ต่อบัญชีผู้รับ" — รวมยอดประกาศ vs ยอดโอนจริง
+      //    (รองรับการแบ่งโอน: ประกาศ 280,000 = สลิป 50+50+50+50+50+30 → รวมแล้วตรง)
+      const slipsTransfer = slips.filter(s => s.recipient_last4);       // สลิปโอน (มีผู้รับ)
+      const slipsAtm = slips.filter(s => !s.recipient_last4);           // ถอนเงินสด ไม่มีผู้รับ
+      const gByAcc = new Map();
+      groups.forEach(g => {
+        let a = gByAcc.get(g.last4);
+        if (!a) { a = { announced: 0, announceCount: 0, name: '', bank: '' }; gByAcc.set(g.last4, a); }
+        a.announced = round2(a.announced + g.amount); a.announceCount++;
+        if (g.name && !a.name) a.name = g.name; if (g.bank && !a.bank) a.bank = g.bank;
+      });
+      const sByAcc = new Map();
+      slipsTransfer.forEach(s => {
+        let a = sByAcc.get(s.recipient_last4);
+        if (!a) { a = { transferred: 0, slipCount: 0, bank: '' }; sByAcc.set(s.recipient_last4, a); }
+        a.transferred = round2(a.transferred + s.amount); a.slipCount++;
+        if (s.bankCode && !a.bank) a.bank = s.bankCode;
+      });
+      const accounts = [];
+      for (const last4 of new Set([...gByAcc.keys(), ...sByAcc.keys()])) {
+        const g = gByAcc.get(last4) || { announced: 0, announceCount: 0, name: '', bank: '' };
+        const s = sByAcc.get(last4) || { transferred: 0, slipCount: 0, bank: '' };
+        const diff = round2(g.announced - s.transferred); // >0 โอนไม่ครบ, <0 โอนเกิน
+        let status;
+        if (g.announced === 0) status = 'slip_only';       // โอนแต่ไม่มีประกาศ
+        else if (s.transferred === 0) status = 'no_slip';  // ประกาศแต่ยังไม่โอน
+        else if (Math.abs(diff) < 1) status = 'ok';        // โอนครบตรงประกาศ
+        else if (diff > 0) status = 'short';               // โอนไม่ครบ
+        else status = 'over';                              // โอนเกินประกาศ
+        accounts.push({ last4, name: g.name || '', bank: g.bank || s.bank || '', announced: g.announced, announceCount: g.announceCount, transferred: s.transferred, slipCount: s.slipCount, diff, status });
+      }
+      // เรียงปัญหาก่อน: ยังไม่โอน → โอนไม่ครบ → โอนเกิน → โอนไม่มีประกาศ → ครบ; ในกลุ่มเดียวกัน ส่วนต่างมากก่อน
+      const rank = { no_slip: 0, short: 1, over: 2, slip_only: 3, ok: 4 };
+      accounts.sort((a, b) => (rank[a.status] - rank[b.status]) || (Math.abs(b.diff) - Math.abs(a.diff)) || (b.announced - a.announced));
 
-      // 4) สรุปรายบัญชี (ตาม last4 ของประกาศ)
-      const accMap = new Map();
-      const bump = (l4, name, field) => { const k = l4 || '-'; let a = accMap.get(k); if (!a) { a = { last4: k, name: name || '', matched: 0, missing: 0, extra: 0 }; accMap.set(k, a); } a[field]++; if (name && !a.name) a.name = name; };
-      matched.forEach(x => bump(x.group.last4, x.group.name, 'matched'));
-      missingSlip.forEach(g => bump(g.last4, g.name, 'missing'));
-      // เกินประกาศ: จัดกลุ่มด้วยบัญชีผู้รับ (recipient) ให้ตรง scope กับประกาศ ไม่ใช่บัญชีต้นทางสลิป
-      extraSlip.forEach(s => bump(s.recipient_last4 || s.last4, '', 'extra'));
-      const byAccount = [...accMap.values()].sort((a, b) => (b.matched + b.missing + b.extra) - (a.matched + a.missing + a.extra));
-
-      const sum = (arr, f) => arr.reduce((t, x) => t + (f(x) || 0), 0);
-      // แยกเกินประกาศ: มีเลขผู้รับ = สลิปโอนไม่มีประกาศ (ควรตรวจ) · ไม่มีผู้รับ = ถอน ATM (ปกติ)
-      const extraTransfer = extraSlip.filter(s => s.recipient_last4);
-      const extraWithdraw = extraSlip.filter(s => !s.recipient_last4);
+      const cnt = (st) => accounts.filter(a => a.status === st).length;
+      const sumF = (pred, f) => accounts.filter(pred).reduce((t, a) => t + (f(a) || 0), 0);
       return {
         scope: { mode: scope, from: lo, to: hi },
         summary: {
-          groupCount: groups.length, slipCount: slips.length,
-          matchedCount: matched.length, missingCount: missingSlip.length, extraCount: extraSlip.length,
-          extraTransferCount: extraTransfer.length, extraWithdrawCount: extraWithdraw.length,
-          groupTotal: sum(groups, g => g.amount), slipTotal: sum(slips, s => s.amount),
-          matchedTotal: sum(matched, x => x.group.amount),
-          missingTotal: sum(missingSlip, g => g.amount), extraTotal: sum(extraSlip, s => s.amount),
-          extraTransferTotal: sum(extraTransfer, s => s.amount), extraWithdrawTotal: sum(extraWithdraw, s => s.amount),
+          accountCount: accounts.length,
+          okCount: cnt('ok'), shortCount: cnt('short'), overCount: cnt('over'),
+          noSlipCount: cnt('no_slip'), slipOnlyCount: cnt('slip_only'),
+          announcedTotal: round2(sumF(() => true, a => a.announced)),
+          transferredTotal: round2(sumF(() => true, a => a.transferred)),
+          shortTotal: round2(sumF(a => a.status === 'short' || a.status === 'no_slip', a => a.diff)),   // ยอดที่ยังขาด
+          overTotal: round2(-sumF(a => a.status === 'over' || a.status === 'slip_only', a => a.diff)),   // ยอดที่เกิน
+          atmCount: slipsAtm.length, atmTotal: round2(slipsAtm.reduce((t, s) => t + s.amount, 0)),
         },
-        matched, missingSlip, extraSlip, extraTransfer, extraWithdraw, byAccount,
+        accounts,
+        atm: slipsAtm.map(s => ({ day: s.day, time: s.time, amount: s.amount, last4: s.last4, bank: s.bankCode || s.bank })),
         fetchedAt: new Date().toISOString(),
       };
   }
@@ -1674,27 +1696,24 @@ pin.focus();
     try {
       const XLSX = require('xlsx');
       const d = await computeGroupMatch(req.query);
+      const st = d.summary;
+      const label = { ok: 'โอนครบ', short: 'โอนไม่ครบ', over: 'โอนเกิน', no_slip: 'ยังไม่โอน', slip_only: 'โอนไม่มีประกาศ' };
       const wb = XLSX.utils.book_new();
-      const sumRows = [['สรุป', 'จำนวน', 'ยอดรวม'],
-        ['ประกาศ', d.summary.groupCount, d.summary.groupTotal],
-        ['สลิป', d.summary.slipCount, d.summary.slipTotal],
-        ['ตรงกัน', d.summary.matchedCount, d.summary.matchedTotal],
-        ['ขาดสลิป (ประกาศไม่มีสลิป)', d.summary.missingCount, d.summary.missingTotal],
-        ['สลิปโอนไม่มีประกาศ (ควรตรวจ)', d.summary.extraTransferCount, d.summary.extraTransferTotal],
-        ['ถอน ATM ไม่มีผู้รับ (ปกติ)', d.summary.extraWithdrawCount, d.summary.extraWithdrawTotal]];
-      const mRows = [['วันที่', 'เวลา', 'ยอด', 'เลขบัญชี', 'ธนาคาร', 'ชื่อ', 'สลิป-วัน', 'สลิป-ยอด', 'สลิป-บัญชีผู้รับ']];
-      d.matched.forEach(x => mRows.push([x.group.date, x.group.time, x.group.amount, x.group.last4, x.group.bank, x.group.name, x.slip.day, x.slip.amount, x.slip.recipient_last4 || x.slip.last4]));
-      const missRows = [['วันที่', 'เวลา', 'ยอด', 'เลขบัญชี', 'ธนาคาร', 'ชื่อ']];
-      d.missingSlip.forEach(g => missRows.push([g.date, g.time, g.amount, g.last4, g.bank, g.name]));
-      const exTRows = [['สลิป-วัน', 'เวลา', 'ยอด', 'บัญชี', 'ผู้รับ', 'ธนาคาร']];
-      (d.extraTransfer || []).forEach(s => exTRows.push([s.day, s.time, s.amount, s.last4, s.recipient_last4, s.bankCode || s.bank]));
-      const exWRows = [['สลิป-วัน', 'เวลา', 'ยอด', 'บัญชี', 'ธนาคาร']];
-      (d.extraWithdraw || []).forEach(s => exWRows.push([s.day, s.time, s.amount, s.last4, s.bankCode || s.bank]));
+      const sumRows = [['สรุป (กระทบยอดต่อบัญชี)', 'จำนวนบัญชี', 'ยอด'],
+        ['บัญชีทั้งหมด', st.accountCount, ''],
+        ['โอนครบตรงประกาศ', st.okCount, ''],
+        ['ยังไม่โอน (ประกาศไม่มีสลิป)', st.noSlipCount, ''],
+        ['โอนไม่ครบ', st.shortCount, ''],
+        ['โอนเกินประกาศ', st.overCount, ''],
+        ['โอนไม่มีประกาศ', st.slipOnlyCount, ''],
+        ['ยอดประกาศรวม', '', st.announcedTotal],
+        ['ยอดโอนจริงรวม', '', st.transferredTotal],
+        ['ยอดที่ยังขาด', '', st.shortTotal],
+        ['ถอน ATM (ไม่นับ)', st.atmCount, st.atmTotal]];
+      const accRows = [['เลขบัญชี', 'ชื่อ', 'ธนาคาร', 'ยอดประกาศ', 'จำนวนประกาศ', 'ยอดโอนจริง', 'จำนวนสลิป', 'ส่วนต่าง', 'สถานะ']];
+      d.accounts.forEach(a => accRows.push([a.last4, a.name, a.bank, a.announced, a.announceCount, a.transferred, a.slipCount, a.diff, label[a.status] || a.status]));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumRows), 'สรุป');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mRows), 'ตรงกัน');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(missRows), 'ขาดสลิป');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exTRows), 'สลิปโอนไม่มีประกาศ');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exWRows), 'ถอน ATM');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(accRows), 'กระทบยอดรายบัญชี');
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="groupmatch.xlsx"');

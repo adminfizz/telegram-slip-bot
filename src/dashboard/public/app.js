@@ -649,8 +649,8 @@ function populateGmAccounts(d) {
   const sel = document.getElementById('gmAccount');
   if (!sel) return;
   const cur = sel.value;
-  const accs = (d.byAccount || []).map(a => a.last4).filter(x => x && x !== '-');
-  sel.innerHTML = '<option value="">ทุกบัญชี (รวม)</option>'
+  const accs = (d.accounts || []).map(a => a.last4).filter(x => x && x !== '-');
+  sel.innerHTML = '<option value="">ทุกบัญชี</option>'
     + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}</option>`).join('');
   sel.value = accs.includes(cur) ? cur : '';
 }
@@ -660,82 +660,49 @@ function gmPickAccount(last4) {
   if (sel) { sel.value = last4; renderGroupMatch(); }
 }
 
-// แถวประกาศ (ขาดสลิป) / สลิป (เกินประกาศ) / ตรงกัน
-function gmGroupRow(g) {
-  return `<div class="tx-row">
-    <span>${escHtml(g.date || '')}${g.time ? ' ' + escHtml(g.time) : ''}</span>
-    <span>****${escHtml(g.last4 || '-')}</span>
-    <span>${escHtml(g.bank || '-')}</span>
-    <span>${fmtMoney(g.amount)} ฿</span>
-    <span class="acc-bank">${escHtml(g.name || '-')}</span></div>`;
-}
-function gmSlipRow(s) {
-  return `<div class="tx-row">
-    <span>${escHtml(s.day || '')}${s.time ? ' ' + escHtml(s.time) : ''}</span>
-    <span>****${escHtml(s.recipient_last4 || s.last4 || '-')}</span>
-    <span>${escHtml(s.bankCode || s.bank || '-')}</span>
-    <span>${fmtMoney(s.amount)} ฿</span>
-    <span class="acc-bank">${escHtml(s.tx_type || '')}</span></div>`;
-}
-function gmMatchRow(x) {
-  const g = x.group || {}, s = x.slip || {};
-  return `<div class="tx-row">
-    <span>${escHtml(g.date || '')}${g.time ? ' ' + escHtml(g.time) : ''}</span>
-    <span>****${escHtml(g.last4 || '-')}</span>
-    <span>${escHtml(g.bank || '-')}</span>
-    <span>${fmtMoney(g.amount)} ฿</span>
-    <span class="acc-bank">${escHtml(g.name || '-')} → สลิป ${escHtml(s.day || '')}</span></div>`;
-}
-function gmList(title, arr, kind, hint) {
-  if (!arr || !arr.length) return '';
-  const rowFn = kind === 'group' ? gmGroupRow : (kind === 'slip' ? gmSlipRow : gmMatchRow);
-  const head = kind === 'match'
-    ? '<span>วัน/เวลา</span><span>บัญชี</span><span>ธนาคาร</span><span>ยอด</span><span>ชื่อ → สลิป</span>'
-    : '<span>วัน/เวลา</span><span>บัญชี</span><span>ธนาคาร</span><span>ยอด</span><span>' + (kind === 'group' ? 'ชื่อ' : 'ประเภท') + '</span>';
-  return `<div class="info-card" style="margin-top:.75rem;">
-    <h3>${title} · ${arr.length} รายการ</h3>
-    ${hint ? `<p class="subtitle">${hint}</p>` : ''}
-    <div class="tx-table bm-table"><div class="tx-row tx-head">${head}</div>
-    ${arr.map(rowFn).join('')}</div></div>`;
+const GM_STATUS = {
+  no_slip:   { label: 'ยังไม่โอน', icon: '🔴', cls: 'gm-nosl' },
+  short:     { label: 'โอนไม่ครบ', icon: '🟠', cls: 'gm-short' },
+  over:      { label: 'โอนเกิน', icon: '🟡', cls: 'gm-over' },
+  slip_only: { label: 'โอนไม่มีประกาศ', icon: '🔵', cls: 'gm-slip' },
+  ok:        { label: 'โอนครบ', icon: '✅', cls: 'gm-ok' },
+};
+
+// แถวกระทบยอด 1 บัญชี: ประกาศรวม vs โอนจริงรวม (รองรับแบ่งโอน — แสดง ×จำนวนใบ)
+function gmAcctRow(a) {
+  const st = GM_STATUS[a.status] || { label: a.status, icon: '', cls: '' };
+  const diffTxt = Math.abs(a.diff) < 1 ? '-' : (a.diff > 0 ? '<span class="gm-d-short">−' + fmtMoney(a.diff) + '</span>' : '<span class="gm-d-over">+' + fmtMoney(-a.diff) + '</span>');
+  return `<div class="tx-row gm-acct ${st.cls}">
+    <span><strong>****${escHtml(a.last4)}</strong>${a.name ? ` <span class="acc-bank">${escHtml(a.name)}</span>` : ''}</span>
+    <span>${escHtml(a.bank || '-')}</span>
+    <span>${fmtMoney(a.announced)}${a.announceCount > 1 ? ` <small>×${a.announceCount}</small>` : ''}</span>
+    <span>${fmtMoney(a.transferred)}${a.slipCount > 1 ? ` <small>×${a.slipCount}</small>` : ''}</span>
+    <span>${diffTxt}</span>
+    <span class="gm-badge">${st.icon} ${st.label}</span></div>`;
 }
 
 function renderGroupMatch() {
   const box = document.getElementById('gmContainer');
   if (!box || !gmData) return;
-  const d = gmData;
+  const d = gmData, sm = d.summary || {};
   const acc = document.getElementById('gmAccount')?.value || '';
-  const fg = (arr) => acc ? (arr || []).filter(g => g.last4 === acc) : (arr || []);
-  const fs = (arr) => acc ? (arr || []).filter(s => s.recipient_last4 === acc || s.last4 === acc) : (arr || []);
-  const matched = (d.matched || []).filter(x => !acc || x.group.last4 === acc);
-  const missing = fg(d.missingSlip);
-  const extraT = fs(d.extraTransfer || []);
-  const extraW = fs(d.extraWithdraw || []);
-  const sm = d.summary || {};
-  const scopeTag = acc ? ` · เฉพาะบัญชี ****${escHtml(acc)}` : '';
+  let accounts = d.accounts || [];
+  if (acc) accounts = accounts.filter(a => a.last4 === acc);
 
   const chips = `<div class="tokchart-avg">
-    🧾 ประกาศ <b>${acc ? (matched.length + missing.length) : (sm.groupCount ?? 0)}</b> · 📄 สลิป <b>${acc ? (matched.length + extraT.length + extraW.length) : (sm.slipCount ?? 0)}</b>${scopeTag}<br>
-    ✅ ตรงกัน <b>${matched.length}</b> · ⚠️ ขาดสลิป <b>${missing.length}</b> (${fmtMoney(missing.reduce((a, g) => a + (Number(g.amount) || 0), 0))} ฿)<br>
-    🟡 สลิปโอนไม่มีประกาศ <b>${extraT.length}</b> (${fmtMoney(extraT.reduce((a, s) => a + (Number(s.amount) || 0), 0))} ฿) · 🏧 ถอน ATM ไม่มีผู้รับ <b>${extraW.length}</b> <span class="acc-bank">(ปกติ)</span>
+    💰 ยอดประกาศ <b>${fmtMoney(sm.announcedTotal)}</b> ฿ · โอนจริง <b>${fmtMoney(sm.transferredTotal)}</b> ฿ · ยังขาด <b style="color:var(--red)">${fmtMoney(sm.shortTotal)}</b> ฿<br>
+    👤 <b>${sm.accountCount ?? 0}</b> บัญชี · ✅ ครบ <b>${sm.okCount ?? 0}</b> · 🔴 ยังไม่โอน <b>${sm.noSlipCount ?? 0}</b> · 🟠 ไม่ครบ <b>${sm.shortCount ?? 0}</b> · 🟡 เกิน <b>${sm.overCount ?? 0}</b> · 🔵 ไม่มีประกาศ <b>${sm.slipOnlyCount ?? 0}</b><br>
+    <span class="acc-bank">🏧 ถอน ATM ${sm.atmCount ?? 0} ใบ (${fmtMoney(sm.atmTotal)} ฿) — ไม่นับในการกระทบยอด</span>
   </div>`;
 
-  let accTable = '';
-  if (!acc && (d.byAccount || []).length > 1) {
-    const rows = d.byAccount.slice(0, 40).map(a => `<div class="tx-row bm-acc-row" onclick="gmPickAccount('${escHtml(a.last4)}')" style="cursor:pointer;">
-      <span>****${escHtml(a.last4 || '-')}${a.name ? ` <span class="acc-bank">${escHtml(a.name)}</span>` : ''}</span>
-      <span>✅ ${a.matched}</span><span>⚠️ ${a.missing}</span><span>🟡 ${a.extra}</span></div>`).join('');
-    accTable = `<div class="info-card" style="margin-top:.75rem;"><h3>แยกรายบัญชี <span class="subtitle">(คลิกเพื่อดูเฉพาะบัญชี)</span></h3>
-      <div class="tx-table bm-acc-table"><div class="tx-row tx-head"><span>บัญชี</span><span>ตรงกัน</span><span>ขาดสลิป</span><span>เกินประกาศ</span></div>${rows}</div></div>`;
-  }
+  if (!accounts.length) { box.innerHTML = chips + '<div class="info-card empty-state" style="margin-top:.75rem;">ไม่พบบัญชีในช่วงที่เลือก</div>'; return; }
 
-  const empty = (matched.length + missing.length + extraT.length + extraW.length) === 0
-    ? '<div class="info-card empty-state" style="margin-top:.75rem;">ไม่พบรายการในช่วง/บัญชีที่เลือก</div>' : '';
-
-  box.innerHTML = chips + empty + accTable
-    + gmList('⚠️ ขาดสลิป', missing, 'group', 'ประกาศแจ้งเบิก แต่ยังไม่มีสลิปโอนที่ตรงกัน')
-    + gmList('🟡 สลิปโอนไม่มีประกาศ', extraT, 'slip', 'มีสลิปโอน แต่ไม่เจอประกาศที่ตรงกัน — ควรตรวจ')
-    + gmList('🏧 ถอน ATM (ไม่มีผู้รับ)', extraW, 'slip', 'สลิปถอนเงินสด ไม่มีเลขผู้รับ — ปกติไม่ผูกกับประกาศ')
-    + gmList('✅ ตรงกัน', matched, 'match', 'ประกาศจับคู่กับสลิปโอนได้');
+  const table = `<div class="info-card" style="margin-top:.75rem;">
+    <h3>กระทบยอดรายบัญชี <span class="subtitle">(ยอดประกาศ vs ยอดโอนจริง · เรียงบัญชีที่มีปัญหาก่อน)</span></h3>
+    <div class="tx-table gm-table"><div class="tx-row tx-head">
+      <span>บัญชี / ชื่อ</span><span>ธนาคาร</span><span>ประกาศ</span><span>โอนจริง</span><span>ต่าง</span><span>สถานะ</span></div>
+    ${accounts.map(gmAcctRow).join('')}</div></div>`;
+  box.innerHTML = chips + table;
 }
 
 function exportGroupXlsx() {

@@ -1586,6 +1586,19 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 .bm-acc-row:hover { background: rgba(91,140,255,.10); }
 @media (max-width: 820px) { .bm-table .tx-row, .bm-acc-table .tx-row { grid-template-columns: 1fr 1fr; } }
 
+/* กระทบยอดรายบัญชี (group match) — 6 คอลัมน์ + แต้มสีพื้นตามสถานะ (ไม่ใช้ side-stripe) */
+.gm-table .tx-row { grid-template-columns: minmax(150px,1.7fr) 84px 110px 110px 96px 118px; }
+.gm-table .tx-row strong { white-space: nowrap; }
+.gm-table .tx-row small { color: var(--text-muted); }
+.gm-acct.gm-nosl { background: rgba(239,68,68,.07); }
+.gm-acct.gm-short { background: rgba(251,146,60,.08); }
+.gm-acct.gm-over { background: rgba(250,204,21,.06); }
+.gm-acct.gm-slip { background: rgba(59,130,246,.06); }
+.gm-d-short { color: #f87171; font-weight: 600; }
+.gm-d-over { color: #fbbf24; font-weight: 600; }
+.gm-badge { white-space: nowrap; font-size: 12px; }
+@media (max-width: 820px) { .gm-table .tx-row { grid-template-columns: 1fr 1fr; } }
+
 /* Top 10 */
 .top10-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
 @media (max-width: 720px) { .top10-grid { grid-template-columns: 1fr; } }
