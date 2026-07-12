@@ -124,4 +124,4 @@ async function uploadSlip(auth, filePath, fileName, options = {}) {
   }
 }
 
-module.exports = { uploadSlip, buildSlipFileName, getBangkokDateParts, clearFolderCache };
+module.exports = { uploadSlip, buildSlipFileName, getBangkokDateParts, clearFolderCache, getOrCreateFolder };
