@@ -14,9 +14,9 @@ const crypto = require('crypto');
 const { Readable } = require('stream');
 
 const ROOT = process.env.BACKUP_ROOT || 'C:\\ANto';
-const SINGLE = ['.env', 'credentials.json'];
+const SINGLE = ['.env', 'credentials.json', 'ai_usage.json'];
 const DIRS = ['tokens'];
-const DATA = ['data/slip_jobs.json', 'data/ai_usage.json', 'data/slipbot.db'];
+const DATA = ['data/slip_jobs.json', 'data/slipbot.db'];
 const DRIVE_BACKUP_ROOT = 'TelegramSlipBot-Backup';
 
 // เวลาไทย (Asia/Bangkok) — วัน/เดือน/ปี พ.ศ. ย่อ + เวลา
