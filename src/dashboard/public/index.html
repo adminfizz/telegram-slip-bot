@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=54" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=55" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=54">
+  <link rel="stylesheet" href="/style.css?v=55">
 </head>
 <body>
   <!-- Loading screen -->
@@ -418,7 +418,7 @@
         <div class="page-header" style="justify-content: space-between; align-items: center;">
           <div>
             <h1>🧾 จับคู่ประกาศกลุ่ม</h1>
-            <p class="subtitle">กระทบยอดต่อบัญชี — รวมยอดแจ้งเบิก vs ยอดโอนจริง (รองรับแบ่งโอนหลายใบ) · โอนครบ / ยังไม่โอน / ไม่ครบ / เกิน</p>
+            <p class="subtitle">กระทบยอดแจ้งเบิก vs โอนจริง แยกรายวัน · รองรับแบ่งโอนหลายใบ</p>
             <p class="live-updated" id="gmUpdatedAt"></p>
           </div>
           <div class="jobs-actions">
@@ -426,32 +426,59 @@
             <button class="btn btn-secondary" onclick="exportGroupXlsx()">⬇️ Excel</button>
           </div>
         </div>
-        <div class="tx-filters">
-          <label>ขอบเขต<select id="gmScope" onchange="gmScopeChange()">
-            <option value="month" selected>รายเดือน</option>
-            <option value="all">ทั้งหมด</option>
-            <option value="day">รายวัน</option>
-            <option value="range">ช่วงเวลา</option>
-          </select></label>
-          <label id="gmDateWrap" style="display:none;">วัน<input type="date" id="gmDate"></label>
-          <label id="gmFromWrap" style="display:none;">จาก<input type="date" id="gmFrom"></label>
-          <label id="gmToWrap" style="display:none;">ถึง<input type="date" id="gmTo"></label>
-          <label id="gmMonthWrap" style="display:none;">เดือน<input type="month" id="gmMonth"></label>
-          <label>สถานะ<select id="gmStatus" onchange="renderGroupMatch()">
+
+        <!-- ตัวกรองครบวงจร: ช่วงเร็ว + วันเดียว + ช่วงวันที่ + สถานะ + บัญชี + มุมมอง -->
+        <div class="gm-controls">
+          <button class="btn btn-chip" id="gmp-today" onclick="gmPreset('today')">วันนี้</button>
+          <button class="btn btn-chip" id="gmp-yesterday" onclick="gmPreset('yesterday')">เมื่อวาน</button>
+          <button class="btn btn-chip" id="gmp-7d" onclick="gmPreset('7d')">7 วัน</button>
+          <button class="btn btn-chip" id="gmp-30d" onclick="gmPreset('30d')">30 วัน</button>
+          <button class="btn btn-chip" id="gmp-thisMonth" onclick="gmPreset('thisMonth')">เดือนนี้</button>
+          <button class="btn btn-chip" id="gmp-lastMonth" onclick="gmPreset('lastMonth')">เดือนก่อน</button>
+          <button class="btn btn-chip" id="gmp-all" onclick="gmPreset('all')">ทั้งหมด</button>
+          <div class="date-range" title="ดูวันเดียว — เลือกแล้วจับคู่ทันที">
+            <span class="range-sep">วัน</span>
+            <input type="date" id="gmDay" class="date-input" aria-label="เลือกดูวันเดียว" onchange="gmPickDay()">
+          </div>
+          <div class="date-range" title="ดูช่วงวันที่">
+            <span class="range-sep">ช่วง</span>
+            <input type="date" id="gmFrom" class="date-input" aria-label="จากวันที่">
+            <span class="range-sep">ถึง</span>
+            <input type="date" id="gmTo" class="date-input" aria-label="ถึงวันที่">
+            <button class="btn btn-primary" onclick="gmApplyRange()">🔍 กรอง</button>
+          </div>
+          <label class="gm-sel">สถานะ<select id="gmStatus" onchange="renderGroupMatch()">
             <option value="">ทั้งหมด</option>
-            <option value="problem">เฉพาะที่โอนแล้วไม่ตรง (ไม่ครบ+เกิน)</option>
+            <option value="problem">โอนแล้วไม่ตรง (ไม่ครบ+เกิน)</option>
             <option value="short">โอนไม่ครบ</option>
             <option value="over">โอนเกิน</option>
             <option value="no_slip">ยังไม่โอน</option>
             <option value="slip_only">โอนไม่มีประกาศ</option>
             <option value="ok">โอนครบ</option>
           </select></label>
-          <label>บัญชี<select id="gmAccount" onchange="renderGroupMatch()">
+          <label class="gm-sel">บัญชี<select id="gmAccount" onchange="renderGroupMatch()">
             <option value="">ทุกบัญชี</option>
           </select></label>
-          <button class="btn btn-chip" onclick="loadGroupMatch()">จับคู่</button>
+          <div class="gm-viewtoggle" role="group" aria-label="มุมมอง">
+            <button class="btn btn-chip chip-active" id="gmv-day" onclick="gmSetView('day')">📅 รายวัน</button>
+            <button class="btn btn-chip" id="gmv-account" onclick="gmSetView('account')">👤 รายบัญชี</button>
+          </div>
         </div>
-        <div id="gmContainer" class="jobs-container"><div class="info-card empty-state">เลือกขอบเขตแล้วกด "จับคู่"</div></div>
+
+        <!-- การ์ดสรุป -->
+        <div id="gmStats" class="gm-stats"></div>
+
+        <!-- กราฟรายวัน: ประกาศ vs โอนจริง -->
+        <div class="info-card gm-chart-card" id="gmChartCard" style="display:none;">
+          <h3>ประกาศ vs โอนจริง รายวัน <span class="subtitle">(คลิกวันเพื่อเจาะดู)</span></h3>
+          <div class="gm-legend">
+            <span><i class="gm-dot gm-dot-ann"></i> ยอดประกาศ</span>
+            <span><i class="gm-dot gm-dot-tr"></i> ยอดโอนจริง</span>
+          </div>
+          <div id="gmChart"></div>
+        </div>
+
+        <div id="gmContainer" class="jobs-container"><div class="info-card empty-state">กำลังโหลด...</div></div>
       </section>
 
       <!-- Settings Tab -->
@@ -712,6 +739,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=54"></script>
+  <script src="/app.js?v=55"></script>
 </body>
 </html>

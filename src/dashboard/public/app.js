@@ -279,7 +279,8 @@ document.querySelectorAll('.nav-item').forEach(item => {
       bmScopeChange();
     }
     if (tabId === 'groupmatch') {
-      gmScopeChange();
+      // เปิดแท็บครั้งแรก → โหลด "เดือนนี้" อัตโนมัติ ไม่ต้องกดจับคู่เอง
+      if (!gmData && !gmInFlight) gmPreset('thisMonth');
     }
   });
 });
@@ -601,31 +602,61 @@ function bmPickAccount(last4) {
   if (sel) { sel.value = last4; renderBankMatch(); }
 }
 
-// === จับคู่ประกาศกลุ่ม (group match) — ประกาศแจ้งเบิก vs สลิป OCR ===
-let gmData = null, gmInFlight = false;
+// === จับคู่ประกาศกลุ่ม (group match) — กระทบยอดรายวัน + รายบัญชี ===
+let gmData = null, gmInFlight = false, gmView = 'day';
+const GM_PRESETS = ['today', 'yesterday', '7d', '30d', 'thisMonth', 'lastMonth', 'all'];
 
-function gmScopeChange() {
-  const scope = document.getElementById('gmScope')?.value || 'month';
-  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-  show('gmDateWrap', scope === 'day');
-  show('gmFromWrap', scope === 'range');
-  show('gmToWrap', scope === 'range');
-  show('gmMonthWrap', scope === 'month');
-  const now = new Date(), pad = (n) => String(n).padStart(2, '0');
-  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const setIfEmpty = (id, val) => { const el = document.getElementById(id); if (el && !el.value) el.value = val; };
-  if (scope === 'day') setIfEmpty('gmDate', today);
-  if (scope === 'month') setIfEmpty('gmMonth', today.slice(0, 7));
-  if (scope === 'range') { setIfEmpty('gmFrom', today.slice(0, 8) + '01'); setIfEmpty('gmTo', today); }
+function gmSetChip(kind) {
+  GM_PRESETS.forEach(k => {
+    const el = document.getElementById('gmp-' + k);
+    if (el) el.classList.toggle('chip-active', kind === k);
+  });
+}
+
+// ช่วงเร็ว: today | yesterday | 7d | 30d | thisMonth | lastMonth | all
+function gmPreset(kind) {
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = new Date();
+  let from = new Date(today), to = new Date(today);
+  if (kind === 'yesterday') { from.setDate(today.getDate() - 1); to.setDate(today.getDate() - 1); }
+  else if (kind === '7d') from.setDate(today.getDate() - 6);
+  else if (kind === '30d') from.setDate(today.getDate() - 29);
+  else if (kind === 'thisMonth') from = new Date(today.getFullYear(), today.getMonth(), 1);
+  else if (kind === 'lastMonth') {
+    from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    to = new Date(today.getFullYear(), today.getMonth(), 0);
+  }
+  const dEl = document.getElementById('gmDay'); if (dEl) dEl.value = '';
+  const fEl = document.getElementById('gmFrom'), tEl = document.getElementById('gmTo');
+  if (kind === 'all') { if (fEl) fEl.value = ''; if (tEl) tEl.value = ''; }
+  else { if (fEl) fEl.value = fmt(from); if (tEl) tEl.value = fmt(to); }
+  gmSetChip(kind);
+  loadGroupMatch();
+}
+
+// เลือกดูวันเดียว — จับคู่ทันที
+function gmPickDay() {
+  const v = document.getElementById('gmDay')?.value || '';
+  if (!v) return;
+  ['gmFrom', 'gmTo'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  gmSetChip(null);
+  loadGroupMatch();
+}
+
+// กดกรองช่วง from–to เอง
+function gmApplyRange() {
+  const dEl = document.getElementById('gmDay'); if (dEl) dEl.value = '';
+  gmSetChip(null);
+  loadGroupMatch();
 }
 
 function gmParams() {
-  const scope = document.getElementById('gmScope')?.value || 'month';
-  const p = new URLSearchParams({ scope });
-  if (scope === 'day') p.set('date', document.getElementById('gmDate')?.value || '');
-  if (scope === 'range') { p.set('from', document.getElementById('gmFrom')?.value || ''); p.set('to', document.getElementById('gmTo')?.value || ''); }
-  if (scope === 'month') p.set('month', document.getElementById('gmMonth')?.value || '');
-  return p;
+  const day = document.getElementById('gmDay')?.value || '';
+  if (day) return new URLSearchParams({ scope: 'day', date: day });
+  const from = document.getElementById('gmFrom')?.value || '';
+  const to = document.getElementById('gmTo')?.value || '';
+  if (from || to) return new URLSearchParams({ scope: 'range', from: from || to, to: to || from });
+  return new URLSearchParams({ scope: 'all' });
 }
 
 async function loadGroupMatch() {
@@ -655,9 +686,12 @@ function populateGmAccounts(d) {
   sel.value = accs.includes(cur) ? cur : '';
 }
 
-function gmPickAccount(last4) {
-  const sel = document.getElementById('gmAccount');
-  if (sel) { sel.value = last4; renderGroupMatch(); }
+function gmSetView(v) {
+  gmView = v;
+  const dEl = document.getElementById('gmv-day'), aEl = document.getElementById('gmv-account');
+  if (dEl) dEl.classList.toggle('chip-active', v === 'day');
+  if (aEl) aEl.classList.toggle('chip-active', v === 'account');
+  renderGroupMatch();
 }
 
 const GM_STATUS = {
@@ -668,7 +702,28 @@ const GM_STATUS = {
   ok:        { label: 'โอนครบ', icon: '✅', cls: 'gm-ok' },
 };
 
-// แถวกระทบยอด 1 บัญชี: ประกาศรวม vs โอนจริงรวม (รองรับแบ่งโอน — แสดง ×จำนวนใบ)
+// วันที่ไทยอ่านง่าย: "ศ. 12 ก.ค. 69"
+const GM_TH_WD = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+const GM_TH_MON = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+function gmThaiDate(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso || '';
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return `${GM_TH_WD[d.getDay()]} ${Number(m[3])} ${GM_TH_MON[Number(m[2]) - 1]} ${String((Number(m[1]) + 543) % 100).padStart(2, '0')}`;
+}
+
+// ตัวกรอง สถานะ+บัญชี (ใช้ทั้งมุมมองรายวันและรายบัญชี)
+function gmFilterAccounts(arr) {
+  const acc = document.getElementById('gmAccount')?.value || '';
+  const st = document.getElementById('gmStatus')?.value || '';
+  let out = arr || [];
+  if (acc) out = out.filter(a => a.last4 === acc);
+  if (st === 'problem') out = out.filter(a => a.status === 'short' || a.status === 'over');
+  else if (st) out = out.filter(a => a.status === st);
+  return out;
+}
+
+// แถวกระทบยอด 1 บัญชี (ใช้ร่วมทั้ง 2 มุมมอง)
 function gmAcctRow(a) {
   const st = GM_STATUS[a.status] || { label: a.status, icon: '', cls: '' };
   const diffTxt = Math.abs(a.diff) < 1 ? '-' : (a.diff > 0 ? '<span class="gm-d-short">−' + fmtMoney(a.diff) + '</span>' : '<span class="gm-d-over">+' + fmtMoney(-a.diff) + '</span>');
@@ -680,32 +735,77 @@ function gmAcctRow(a) {
     <span>${diffTxt}</span>
     <span class="gm-badge">${st.icon} ${st.label}</span></div>`;
 }
+const GM_TABLE_HEAD = '<div class="tx-row tx-head"><span>บัญชี / ชื่อ</span><span>ธนาคาร</span><span>ประกาศ</span><span>โอนจริง</span><span>ต่าง</span><span>สถานะ</span></div>';
+
+// ── การ์ดสรุปบนสุด ──
+function renderGmStats(sm) {
+  const el = document.getElementById('gmStats');
+  if (!el) return;
+  const tile = (label, value, sub, cls) => `<div class="gm-stat ${cls || ''}"><small>${label}</small><strong>${value}</strong>${sub ? `<span>${sub}</span>` : ''}</div>`;
+  el.innerHTML =
+    tile('💰 ยอดประกาศ', fmtMoney(sm.announcedTotal) + ' ฿', `${sm.dayCount ?? 0} วัน · ${sm.accountCount ?? 0} บัญชี`) +
+    tile('📄 โอนจริง', fmtMoney(sm.transferredTotal) + ' ฿', `โอนครบ ${sm.okCount ?? 0} บัญชี`) +
+    tile('⚠️ ยังขาด', fmtMoney(sm.shortTotal) + ' ฿', `ยังไม่โอน ${sm.noSlipCount ?? 0} · ไม่ครบ ${sm.shortCount ?? 0}`, 'gm-stat-bad') +
+    tile('🏧 ถอน ATM', fmtMoney(sm.atmTotal) + ' ฿', `${sm.atmCount ?? 0} ใบ · ไม่นับกระทบยอด`, 'gm-stat-mut');
+}
+
+// ── กราฟรายวัน: ประกาศ vs โอนจริง (แท่งคู่แนวนอน คลิกวันเพื่อเจาะ) ──
+function renderGmChart(days) {
+  const card = document.getElementById('gmChartCard'), box = document.getElementById('gmChart');
+  if (!card || !box) return;
+  const ds = [...(days || [])].sort((a, b) => (a.date < b.date ? -1 : 1)); // เก่า→ใหม่ อ่านเป็นไทม์ไลน์
+  if (ds.length < 2) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const max = Math.max(...ds.map(d => Math.max(d.announced, d.transferred)), 1);
+  box.innerHTML = ds.map(d => {
+    const wA = d.announced > 0 ? Math.max(Math.round(d.announced / max * 100), 2) : 0;
+    const wT = d.transferred > 0 ? Math.max(Math.round(d.transferred / max * 100), 2) : 0;
+    return `<div class="gmc-row" onclick="gmChartPick('${escHtml(d.date)}')" title="ประกาศ ${fmtMoney(d.announced)} ฿ · โอนจริง ${fmtMoney(d.transferred)} ฿ — คลิกเพื่อเจาะดูวันนี้">
+      <span class="gmc-date">${gmThaiDate(d.date)}</span>
+      <span class="gmc-bars"><i class="gmc-bar gmc-ann" style="width:${wA}%"></i><i class="gmc-bar gmc-tr" style="width:${wT}%"></i></span>
+      <span class="gmc-vals">${fmtMoney(d.announced)}<small> / ${fmtMoney(d.transferred)}</small></span>
+    </div>`;
+  }).join('');
+}
+function gmChartPick(date) { const el = document.getElementById('gmDay'); if (el) { el.value = date; gmPickDay(); } }
+
+// ── การ์ดรายวัน: หัววันที่ชัด + สรุป + ตารางบัญชี (ปัญหาก่อน, โอนครบพับไว้) ──
+function gmDayCard(d) {
+  const stFilter = document.getElementById('gmStatus')?.value || '';
+  const all = gmFilterAccounts(d.accounts);
+  const main = stFilter ? all : all.filter(a => a.status !== 'ok');
+  const okList = stFilter ? [] : all.filter(a => a.status === 'ok');
+  const short = d.shortTotal > 0 ? ` · <span class="gm-d-short">ขาด ${fmtMoney(d.shortTotal)} ฿</span>` : '';
+  const rows = main.map(gmAcctRow).join('');
+  const okBlock = okList.length
+    ? `<details class="gm-ok-details"><summary>✅ โอนครบ ${okList.length} บัญชี — กดเพื่อดู</summary><div class="tx-table gm-table">${GM_TABLE_HEAD}${okList.map(gmAcctRow).join('')}</div></details>`
+    : '';
+  return `<div class="info-card gm-day-card">
+    <div class="gm-day-head">
+      <div class="gm-day-title"><h3>📅 ${gmThaiDate(d.date)}</h3><span class="gm-day-iso">${escHtml(d.date)}</span></div>
+      <div class="gm-day-sum">ประกาศ <b>${fmtMoney(d.announced)}</b> ฿ <small>(${d.announceCount} รายการ)</small> · โอนจริง <b>${fmtMoney(d.transferred)}</b> ฿ <small>(${d.slipCount} สลิป)</small>${short}</div>
+      <div class="gm-day-badges">✅ ครบ ${d.okCount} · 🔴 ยังไม่โอน ${d.noSlipCount} · 🟠 ไม่ครบ ${d.shortCount} · 🟡 เกิน ${d.overCount} · 🔵 ไม่มีประกาศ ${d.slipOnlyCount}${d.atmCount ? ` · 🏧 ATM ${d.atmCount}` : ''}</div>
+    </div>
+    ${main.length ? `<div class="tx-table gm-table">${GM_TABLE_HEAD}${rows}</div>` : (stFilter ? '<div class="empty-state" style="padding:6px 0;">ไม่มีบัญชีตามตัวกรองในวันนี้</div>' : '<div class="gm-day-clear">🎉 วันนี้กระทบยอดครบทุกบัญชี</div>')}
+    ${okBlock}
+  </div>`;
+}
 
 function renderGroupMatch() {
   const box = document.getElementById('gmContainer');
   if (!box || !gmData) return;
-  const d = gmData, sm = d.summary || {};
-  const acc = document.getElementById('gmAccount')?.value || '';
-  const stFilter = document.getElementById('gmStatus')?.value || '';
-  let accounts = d.accounts || [];
-  if (acc) accounts = accounts.filter(a => a.last4 === acc);
-  if (stFilter === 'problem') accounts = accounts.filter(a => a.status === 'short' || a.status === 'over');
-  else if (stFilter) accounts = accounts.filter(a => a.status === stFilter);
-
-  const chips = `<div class="tokchart-avg">
-    💰 ยอดประกาศ <b>${fmtMoney(sm.announcedTotal)}</b> ฿ · โอนจริง <b>${fmtMoney(sm.transferredTotal)}</b> ฿ · ยังขาด <b style="color:var(--red)">${fmtMoney(sm.shortTotal)}</b> ฿<br>
-    👤 <b>${sm.accountCount ?? 0}</b> บัญชี · ✅ ครบ <b>${sm.okCount ?? 0}</b> · 🔴 ยังไม่โอน <b>${sm.noSlipCount ?? 0}</b> · 🟠 ไม่ครบ <b>${sm.shortCount ?? 0}</b> · 🟡 เกิน <b>${sm.overCount ?? 0}</b> · 🔵 ไม่มีประกาศ <b>${sm.slipOnlyCount ?? 0}</b><br>
-    <span class="acc-bank">🏧 ถอน ATM ${sm.atmCount ?? 0} ใบ (${fmtMoney(sm.atmTotal)} ฿) — ไม่นับในการกระทบยอด</span>
-  </div>`;
-
-  if (!accounts.length) { box.innerHTML = chips + '<div class="info-card empty-state" style="margin-top:.75rem;">ไม่พบบัญชีในช่วงที่เลือก</div>'; return; }
-
-  const table = `<div class="info-card" style="margin-top:.75rem;">
-    <h3>กระทบยอดรายบัญชี <span class="subtitle">(ยอดประกาศ vs ยอดโอนจริง · เรียงบัญชีที่มีปัญหาก่อน)</span></h3>
-    <div class="tx-table gm-table"><div class="tx-row tx-head">
-      <span>บัญชี / ชื่อ</span><span>ธนาคาร</span><span>ประกาศ</span><span>โอนจริง</span><span>ต่าง</span><span>สถานะ</span></div>
-    ${accounts.map(gmAcctRow).join('')}</div></div>`;
-  box.innerHTML = chips + table;
+  const d = gmData;
+  renderGmStats(d.summary || {});
+  renderGmChart(d.days || []);
+  if (gmView === 'account') {
+    const accounts = gmFilterAccounts(d.accounts);
+    box.innerHTML = accounts.length
+      ? `<div class="info-card"><h3>กระทบยอดรายบัญชี (รวมทั้งช่วง) <span class="subtitle">เรียงบัญชีที่มีปัญหาก่อน</span></h3><div class="tx-table gm-table">${GM_TABLE_HEAD}${accounts.map(gmAcctRow).join('')}</div></div>`
+      : '<div class="info-card empty-state">ไม่พบบัญชีตามตัวกรอง</div>';
+  } else {
+    const days = d.days || [];
+    box.innerHTML = days.length ? days.map(gmDayCard).join('') : '<div class="info-card empty-state">ไม่พบข้อมูลในช่วงที่เลือก</div>';
+  }
 }
 
 function exportGroupXlsx() {

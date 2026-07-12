@@ -1636,36 +1636,63 @@ pin.focus();
       //    (รองรับการแบ่งโอน: ประกาศ 280,000 = สลิป 50+50+50+50+50+30 → รวมแล้วตรง)
       const slipsTransfer = slips.filter(s => s.recipient_last4);       // สลิปโอน (มีผู้รับ)
       const slipsAtm = slips.filter(s => !s.recipient_last4);           // ถอนเงินสด ไม่มีผู้รับ
-      const gByAcc = new Map();
-      groups.forEach(g => {
-        let a = gByAcc.get(g.last4);
-        if (!a) { a = { announced: 0, announceCount: 0, name: '', bank: '' }; gByAcc.set(g.last4, a); }
-        a.announced = round2(a.announced + g.amount); a.announceCount++;
-        if (g.name && !a.name) a.name = g.name; if (g.bank && !a.bank) a.bank = g.bank;
-      });
-      const sByAcc = new Map();
-      slipsTransfer.forEach(s => {
-        let a = sByAcc.get(s.recipient_last4);
-        if (!a) { a = { transferred: 0, slipCount: 0, bank: '' }; sByAcc.set(s.recipient_last4, a); }
-        a.transferred = round2(a.transferred + s.amount); a.slipCount++;
-        if (s.bankCode && !a.bank) a.bank = s.bankCode;
-      });
-      const accounts = [];
-      for (const last4 of new Set([...gByAcc.keys(), ...sByAcc.keys()])) {
-        const g = gByAcc.get(last4) || { announced: 0, announceCount: 0, name: '', bank: '' };
-        const s = sByAcc.get(last4) || { transferred: 0, slipCount: 0, bank: '' };
-        const diff = round2(g.announced - s.transferred); // >0 โอนไม่ครบ, <0 โอนเกิน
-        let status;
-        if (g.announced === 0) status = 'slip_only';       // โอนแต่ไม่มีประกาศ
-        else if (s.transferred === 0) status = 'no_slip';  // ประกาศแต่ยังไม่โอน
-        else if (Math.abs(diff) < 1) status = 'ok';        // โอนครบตรงประกาศ
-        else if (diff > 0) status = 'short';               // โอนไม่ครบ
-        else status = 'over';                              // โอนเกินประกาศ
-        accounts.push({ last4, name: g.name || '', bank: g.bank || s.bank || '', announced: g.announced, announceCount: g.announceCount, transferred: s.transferred, slipCount: s.slipCount, diff, status });
-      }
-      // เรียงปัญหาก่อน: ยังไม่โอน → โอนไม่ครบ → โอนเกิน → โอนไม่มีประกาศ → ครบ; ในกลุ่มเดียวกัน ส่วนต่างมากก่อน
+
+      // กระทบยอดชุดหนึ่ง (ประกาศ+สลิปที่ส่งเข้ามา) → accounts พร้อมสถานะ (ใช้ทั้งภาพรวมและรายวัน)
       const rank = { no_slip: 0, short: 1, over: 2, slip_only: 3, ok: 4 };
-      accounts.sort((a, b) => (rank[a.status] - rank[b.status]) || (Math.abs(b.diff) - Math.abs(a.diff)) || (b.announced - a.announced));
+      function reconcile(gArr, sArr) {
+        const gByAcc = new Map();
+        gArr.forEach(g => {
+          let a = gByAcc.get(g.last4);
+          if (!a) { a = { announced: 0, announceCount: 0, name: '', bank: '' }; gByAcc.set(g.last4, a); }
+          a.announced = round2(a.announced + g.amount); a.announceCount++;
+          if (g.name && !a.name) a.name = g.name; if (g.bank && !a.bank) a.bank = g.bank;
+        });
+        const sByAcc = new Map();
+        sArr.forEach(s => {
+          let a = sByAcc.get(s.recipient_last4);
+          if (!a) { a = { transferred: 0, slipCount: 0, bank: '' }; sByAcc.set(s.recipient_last4, a); }
+          a.transferred = round2(a.transferred + s.amount); a.slipCount++;
+          if (s.bankCode && !a.bank) a.bank = s.bankCode;
+        });
+        const accounts = [];
+        for (const last4 of new Set([...gByAcc.keys(), ...sByAcc.keys()])) {
+          const g = gByAcc.get(last4) || { announced: 0, announceCount: 0, name: '', bank: '' };
+          const s = sByAcc.get(last4) || { transferred: 0, slipCount: 0, bank: '' };
+          const diff = round2(g.announced - s.transferred); // >0 โอนไม่ครบ, <0 โอนเกิน
+          let status;
+          if (g.announced === 0) status = 'slip_only';       // โอนแต่ไม่มีประกาศ
+          else if (s.transferred === 0) status = 'no_slip';  // ประกาศแต่ยังไม่โอน
+          else if (Math.abs(diff) < 1) status = 'ok';        // โอนครบตรงประกาศ
+          else if (diff > 0) status = 'short';               // โอนไม่ครบ
+          else status = 'over';                              // โอนเกินประกาศ
+          accounts.push({ last4, name: g.name || '', bank: g.bank || s.bank || '', announced: g.announced, announceCount: g.announceCount, transferred: s.transferred, slipCount: s.slipCount, diff, status });
+        }
+        // เรียงปัญหาก่อน: ยังไม่โอน → โอนไม่ครบ → โอนเกิน → โอนไม่มีประกาศ → ครบ; ในกลุ่มเดียวกัน ส่วนต่างมากก่อน
+        accounts.sort((a, b) => (rank[a.status] - rank[b.status]) || (Math.abs(b.diff) - Math.abs(a.diff)) || (b.announced - a.announced));
+        return accounts;
+      }
+
+      const accounts = reconcile(groups, slipsTransfer);
+
+      // รายวัน: กระทบยอด "ภายในวันเดียวกัน" (กติกากลุ่ม = โอนภายใน 1 ชม. → วันเดียวกัน)
+      const dayKeys = [...new Set([...groups.map(g => g.date), ...slipsTransfer.map(s => s.day)])].filter(Boolean).sort().reverse();
+      const days = dayKeys.map(date => {
+        const dg = groups.filter(g => g.date === date);
+        const ds = slipsTransfer.filter(s => s.day === date);
+        const dAtm = slipsAtm.filter(s => s.day === date);
+        const acc = reconcile(dg, ds);
+        const c = (st) => acc.filter(a => a.status === st).length;
+        const announced = round2(acc.reduce((t, a) => t + a.announced, 0));
+        const transferred = round2(acc.reduce((t, a) => t + a.transferred, 0));
+        return {
+          date, announced, transferred,
+          shortTotal: round2(acc.filter(a => a.status === 'short' || a.status === 'no_slip').reduce((t, a) => t + a.diff, 0)),
+          announceCount: dg.length, slipCount: ds.length,
+          okCount: c('ok'), shortCount: c('short'), overCount: c('over'), noSlipCount: c('no_slip'), slipOnlyCount: c('slip_only'),
+          atmCount: dAtm.length, atmTotal: round2(dAtm.reduce((t, s) => t + s.amount, 0)),
+          accounts: acc,
+        };
+      });
 
       const cnt = (st) => accounts.filter(a => a.status === st).length;
       const sumF = (pred, f) => accounts.filter(pred).reduce((t, a) => t + (f(a) || 0), 0);
@@ -1680,8 +1707,10 @@ pin.focus();
           shortTotal: round2(sumF(a => a.status === 'short' || a.status === 'no_slip', a => a.diff)),   // ยอดที่ยังขาด
           overTotal: round2(-sumF(a => a.status === 'over' || a.status === 'slip_only', a => a.diff)),   // ยอดที่เกิน
           atmCount: slipsAtm.length, atmTotal: round2(slipsAtm.reduce((t, s) => t + s.amount, 0)),
+          dayCount: days.length,
         },
         accounts,
+        days,
         atm: slipsAtm.map(s => ({ day: s.day, time: s.time, amount: s.amount, last4: s.last4, bank: s.bankCode || s.bank })),
         fetchedAt: new Date().toISOString(),
       };
@@ -1712,7 +1741,10 @@ pin.focus();
         ['ถอน ATM (ไม่นับ)', st.atmCount, st.atmTotal]];
       const accRows = [['เลขบัญชี', 'ชื่อ', 'ธนาคาร', 'ยอดประกาศ', 'จำนวนประกาศ', 'ยอดโอนจริง', 'จำนวนสลิป', 'ส่วนต่าง', 'สถานะ']];
       d.accounts.forEach(a => accRows.push([a.last4, a.name, a.bank, a.announced, a.announceCount, a.transferred, a.slipCount, a.diff, label[a.status] || a.status]));
+      const dayRows = [['วันที่', 'ยอดประกาศ', 'จำนวนประกาศ', 'ยอดโอนจริง', 'จำนวนสลิป', 'ยังขาด', 'โอนครบ(บัญชี)', 'ยังไม่โอน', 'โอนไม่ครบ', 'โอนเกิน', 'ถอน ATM']];
+      (d.days || []).forEach(x => dayRows.push([x.date, x.announced, x.announceCount, x.transferred, x.slipCount, x.shortTotal, x.okCount, x.noSlipCount, x.shortCount, x.overCount, x.atmCount]));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumRows), 'สรุป');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dayRows), 'รายวัน');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(accRows), 'กระทบยอดรายบัญชี');
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
