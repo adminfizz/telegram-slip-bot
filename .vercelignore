@@ -5,3 +5,18 @@ temp/
 app.log
 ai_usage.json
 node_modules/
+# ข้อมูล/รูปสลิปในเครื่อง — Vercel ไม่ใช้ (อ่าน Google Sheets/Drive) และโตเรื่อยๆ จนชน limit 250MB
+data/
+scratch/
+dist/
+# ไฟล์ชั่วคราว/ทดสอบ/backup ในเครื่อง
+*.enc
+group-backup.json
+scan-out*.txt
+scan-*.txt
+probe*.txt
+dump-out.txt
+why*.txt
+wait*.txt
+vlog.txt
+.tg-*
