@@ -1619,15 +1619,14 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 .gm-dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
 .gm-dot-ann { background: #3d7bff; }
 .gm-dot-tr { background: #059669; }
-.gmc-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items: center; padding: 5px 6px; border-radius: 8px; cursor: pointer; }
-.gmc-row:hover { background: rgba(91,140,255,.08); }
-.gmc-date { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-.gmc-bars { display: flex; flex-direction: column; gap: 2px; }  /* ช่องว่าง 2px ระหว่างแท่งคู่ */
-.gmc-bar { display: block; height: 7px; border-radius: 0 4px 4px 0; min-width: 0; }
-.gmc-ann { background: #3d7bff; }
-.gmc-tr { background: #059669; }
-.gmc-vals { font-size: 12px; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.gmc-vals small { color: var(--text-muted); }
+/* กราฟเส้นคู่ ประกาศ vs โอนจริง (กะทัดรัด สูงคงที่ ~190px ไม่ว่ากี่วัน) */
+.gmc2-line { fill: none; stroke-width: 2; stroke-linecap: round; }
+.gmc2-line-ann { stroke: #3d7bff; }
+.gmc2-line-tr { stroke: #059669; }
+.gmc2-dot-ann { fill: #3d7bff; }
+.gmc2-dot-tr { fill: #059669; }
+.gmc2-hit { cursor: pointer; }
+.gmc2-hit:hover rect { fill: rgba(91,140,255,.07); }
 
 .gm-day-card { margin-bottom: 12px; }
 .gm-day-head { margin-bottom: 8px; }

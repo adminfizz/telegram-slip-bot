@@ -778,23 +778,55 @@ function gmPickEmoji(emo) {
   gmSetView('ann');
 }
 
-// ── กราฟรายวัน: ประกาศ vs โอนจริง (แท่งคู่แนวนอน คลิกวันเพื่อเจาะ) ──
+// ── กราฟรายวัน: ประกาศ vs โอนจริง — เส้นคู่กะทัดรัด (สไตล์เดียวกับแนวโน้มรายวัน) คลิก/hover รายวัน ──
 function renderGmChart(days) {
   const card = document.getElementById('gmChartCard'), box = document.getElementById('gmChart');
   if (!card || !box) return;
-  const ds = [...(days || [])].sort((a, b) => (a.date < b.date ? -1 : 1)); // เก่า→ใหม่ อ่านเป็นไทม์ไลน์
-  if (ds.length < 2) { card.style.display = 'none'; return; }
+  let ds = [...(days || [])].sort((a, b) => (a.date < b.date ? -1 : 1)); // เก่า→ใหม่
+  // ตัดวันก่อนเริ่มเก็บประกาศ (เช่นเดือนเก่าที่มีแต่สลิป ไม่มีข้อมูลประกาศ) — กันแถว 0.00 รกกราฟ
+  const first = ds.findIndex(d => (d.announceCount || 0) > 0);
+  if (first === -1 || ds.slice(first).length < 2) { card.style.display = 'none'; return; }
+  ds = ds.slice(first);
   card.style.display = '';
+
+  const W = 760, H = 190, padL = 8, padR = 8, padT = 16, padB = 26;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const n = ds.length;
   const max = Math.max(...ds.map(d => Math.max(d.announced, d.transferred)), 1);
-  box.innerHTML = ds.map(d => {
-    const wA = d.announced > 0 ? Math.max(Math.round(d.announced / max * 100), 2) : 0;
-    const wT = d.transferred > 0 ? Math.max(Math.round(d.transferred / max * 100), 2) : 0;
-    return `<div class="gmc-row" onclick="gmChartPick('${escHtml(d.date)}')" title="ประกาศ ${fmtMoney(d.announced)} ฿ · โอนจริง ${fmtMoney(d.transferred)} ฿ — คลิกเพื่อเจาะดูวันนี้">
-      <span class="gmc-date">${gmThaiDate(d.date)}</span>
-      <span class="gmc-bars"><i class="gmc-bar gmc-ann" style="width:${wA}%"></i><i class="gmc-bar gmc-tr" style="width:${wT}%"></i></span>
-      <span class="gmc-vals">${fmtMoney(d.announced)}<small> / ${fmtMoney(d.transferred)}</small></span>
-    </div>`;
-  }).join('');
+  const xAt = (i) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+  const yAt = (v) => padT + innerH - (v / max) * innerH;
+  // เส้นโค้งนุ่มแบบเดียวกับ trends (Catmull-Rom → Bézier)
+  const smooth = (pts) => {
+    if (!pts.length) return '';
+    let line = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+      line += ` C ${p1.x + (p2.x - p0.x) / 6} ${p1.y + (p2.y - p0.y) / 6}, ${p2.x - (p3.x - p1.x) / 6} ${p2.y - (p3.y - p1.y) / 6}, ${p2.x} ${p2.y}`;
+    }
+    return line;
+  };
+  const pA = ds.map((d, i) => ({ x: xAt(i), y: yAt(d.announced) }));
+  const pT = ds.map((d, i) => ({ x: xAt(i), y: yAt(d.transferred) }));
+  const hitW = innerW / Math.max(n - 1, 1);
+  // hover = tooltip ทั้งสองค่า · คลิก = เจาะดูวันนั้น
+  const hits = ds.map((d, i) => `<g class="gmc2-hit" onclick="gmChartPick('${escHtml(d.date)}')">
+      <rect x="${(xAt(i) - hitW / 2).toFixed(1)}" y="0" width="${hitW.toFixed(1)}" height="${H}" fill="transparent">
+        <title>${gmThaiDate(d.date)}
+ประกาศ 🔥 ${fmtMoney(d.announced)} ฿ (${d.announceCount} รายการ)
+โอนจริง ${fmtMoney(d.transferred)} ฿ (${d.slipCount} สลิป)
+คลิกเพื่อเจาะดูวันนี้</title>
+      </rect>
+      <circle class="gmc2-dot-ann" cx="${pA[i].x.toFixed(1)}" cy="${pA[i].y.toFixed(1)}" r="2.6"></circle>
+      <circle class="gmc2-dot-tr" cx="${pT[i].x.toFixed(1)}" cy="${pT[i].y.toFixed(1)}" r="2.6"></circle>
+    </g>`).join('');
+  const labelEvery = Math.ceil(n / 8);
+  const thShort = (iso) => { const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[3])} ${GM_TH_MON[Number(m[2]) - 1]}` : iso; };
+  const labels = ds.map((d, i) => (i % labelEvery === 0 || i === n - 1)
+    ? `<text class="tr-x" x="${xAt(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${thShort(d.date)}</text>` : '').join('');
+  box.innerHTML = `<svg class="trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="กราฟประกาศเทียบโอนจริงรายวัน">
+    <path d="${smooth(pA)}" class="gmc2-line gmc2-line-ann"></path>
+    <path d="${smooth(pT)}" class="gmc2-line gmc2-line-tr"></path>
+    ${labels}${hits}</svg>`;
 }
 function gmChartPick(date) { const el = document.getElementById('gmDay'); if (el) { el.value = date; gmPickDay(); } }
 
