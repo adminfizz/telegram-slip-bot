@@ -1252,15 +1252,18 @@ async function loadAccountChart(period) {
   if (period) acctChartPeriod = period;
   const box = document.getElementById('acctChart');
   if (!box) return;
-  ['today', 'month', 'all'].forEach(k => {
+  ['today', 'yesterday', '7d', 'month', 'all'].forEach(k => {
     const el = document.getElementById('acctChart' + k.charAt(0).toUpperCase() + k.slice(1));
     if (el) el.classList.toggle('chip-active', acctChartPeriod === k);
   });
   try {
     let url = '/api/report';
     const now = new Date();
-    const td = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const fmtD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const td = fmtD(now);
     if (acctChartPeriod === 'today') url += `?date=${td}`;
+    else if (acctChartPeriod === 'yesterday') { const y = new Date(now); y.setDate(now.getDate() - 1); url += `?date=${fmtD(y)}`; }
+    else if (acctChartPeriod === '7d') { const s = new Date(now); s.setDate(now.getDate() - 6); url += `?from=${fmtD(s)}&to=${td}`; }
     else if (acctChartPeriod === 'month') url += `?from=${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01&to=${td}`;
     else url += '?date=all';
     const res = await fetch(url, { cache: 'no-store' });
@@ -1408,7 +1411,16 @@ function exportReportXlsx() { const qs = reportFilterParams(); window.open(qs ? 
 
 let currentReportFilter = 'all'; // ตัวกรองหน้าสรุปยอด: 'all' | 'YYYY-MM-DD' | 'from~to'
 
-function applyReportFilter() {
+// ไฮไลต์ chip ตัวกรองที่เลือกอยู่ (null = กรองเองด้วยวันที่)
+const REPORT_CHIPS = ['today', 'yesterday', '7d', '30d', 'thisMonth', 'lastMonth', 'all'];
+function setReportChip(kind) {
+  REPORT_CHIPS.forEach(k => {
+    const el = document.getElementById('rp-' + k);
+    if (el) el.classList.toggle('chip-active', kind === k);
+  });
+}
+
+function applyReportFilter(keepChip = false) {
   const from = document.getElementById('reportFrom')?.value || '';
   const to = document.getElementById('reportTo')?.value || '';
   let filter;
@@ -1416,23 +1428,35 @@ function applyReportFilter() {
   else if (from) filter = from;
   else if (to) filter = to;
   else filter = 'all';
+  if (keepChip !== true) setReportChip(filter === 'all' ? 'all' : null); // กรองเอง = ดับ chip
   loadReport(filter);
 }
 
 function showAllReport() {
-  const f = document.getElementById('reportFrom'); if (f) f.value = '';
-  const t = document.getElementById('reportTo'); if (t) t.value = '';
+  ['reportFrom', 'reportTo', 'reportDay'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  setReportChip('all');
   loadReport('all');
 }
 
-// เลือกช่วงวันแบบเร็ว: 'today' | 'yesterday' (เมื่อวาน-วันนี้) | '7d'
+// เลือกดู "วันเดียว" จากปฏิทิน — กรองทันที
+function reportPickDay() {
+  const v = document.getElementById('reportDay')?.value || '';
+  if (!v) return;
+  const f = document.getElementById('reportFrom'); if (f) f.value = '';
+  const t = document.getElementById('reportTo'); if (t) t.value = '';
+  setReportChip(null);
+  loadReport(v);
+}
+
+// ช่วงวันแบบเร็ว: today | yesterday (เมื่อวานวันเดียว) | 7d | 30d | thisMonth | lastMonth
 function reportPreset(kind) {
   const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const today = new Date();
   let from = new Date(today);
   let to = new Date(today);
-  if (kind === 'yesterday') from.setDate(today.getDate() - 1);
+  if (kind === 'yesterday') { from.setDate(today.getDate() - 1); to.setDate(today.getDate() - 1); } // เมื่อวานล้วน แยกจากวันนี้ชัดเจน
   else if (kind === '7d') from.setDate(today.getDate() - 6);
+  else if (kind === '30d') from.setDate(today.getDate() - 29);
   else if (kind === 'thisMonth') from = new Date(today.getFullYear(), today.getMonth(), 1);
   else if (kind === 'lastMonth') {
     from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
@@ -1440,9 +1464,12 @@ function reportPreset(kind) {
   }
   const fEl = document.getElementById('reportFrom');
   const tEl = document.getElementById('reportTo');
+  const dEl = document.getElementById('reportDay');
   if (fEl) fEl.value = fmt(from);
   if (tEl) tEl.value = fmt(to);
-  applyReportFilter();
+  if (dEl) dEl.value = '';
+  setReportChip(kind);
+  applyReportFilter(true);
 }
 
 async function loadReport(forceDate = null, silent = false) {

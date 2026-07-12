@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=52" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=53" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=52">
+  <link rel="stylesheet" href="/style.css?v=53">
 </head>
 <body>
   <!-- Loading screen -->
@@ -147,6 +147,8 @@
             <h3 class="provider-stats-title">💳 ยอดรวมต่อบัญชี</h3>
             <div class="trends-range">
               <button class="btn btn-chip" id="acctChartToday" onclick="loadAccountChart('today')">วันนี้</button>
+              <button class="btn btn-chip" id="acctChartYesterday" onclick="loadAccountChart('yesterday')">เมื่อวาน</button>
+              <button class="btn btn-chip" id="acctChart7d" onclick="loadAccountChart('7d')">7 วัน</button>
               <button class="btn btn-chip" id="acctChartMonth" onclick="loadAccountChart('month')">เดือนนี้</button>
               <button class="btn btn-chip" id="acctChartAll" onclick="loadAccountChart('all')">ทั้งหมด</button>
             </div>
@@ -259,18 +261,24 @@
             <p class="subtitle">เริ่มต้นแสดงยอดรวมทั้งหมด • เลือกช่วงวันเพื่อกรองได้</p>
           </div>
           <div class="report-controls">
-            <button class="btn btn-chip" onclick="reportPreset('today')">วันนี้</button>
-            <button class="btn btn-chip" onclick="reportPreset('yesterday')">เมื่อวาน–วันนี้</button>
-            <button class="btn btn-chip" onclick="reportPreset('7d')">7 วัน</button>
-            <button class="btn btn-chip" onclick="reportPreset('thisMonth')">เดือนนี้</button>
-            <button class="btn btn-chip" onclick="reportPreset('lastMonth')">เดือนก่อน</button>
-            <div class="date-range">
+            <button class="btn btn-chip" id="rp-today" onclick="reportPreset('today')">วันนี้</button>
+            <button class="btn btn-chip" id="rp-yesterday" onclick="reportPreset('yesterday')">เมื่อวาน</button>
+            <button class="btn btn-chip" id="rp-7d" onclick="reportPreset('7d')">7 วัน</button>
+            <button class="btn btn-chip" id="rp-30d" onclick="reportPreset('30d')">30 วัน</button>
+            <button class="btn btn-chip" id="rp-thisMonth" onclick="reportPreset('thisMonth')">เดือนนี้</button>
+            <button class="btn btn-chip" id="rp-lastMonth" onclick="reportPreset('lastMonth')">เดือนก่อน</button>
+            <button class="btn btn-chip chip-active" id="rp-all" onclick="showAllReport()">ทั้งหมด</button>
+            <div class="date-range" title="ดูวันเดียว — เลือกแล้วกรองทันที">
+              <span class="range-sep">วัน</span>
+              <input type="date" id="reportDay" class="date-input" aria-label="เลือกดูวันเดียว" onchange="reportPickDay()">
+            </div>
+            <div class="date-range" title="ดูช่วงวันที่">
+              <span class="range-sep">ช่วง</span>
               <input type="date" id="reportFrom" class="date-input" aria-label="จากวันที่">
               <span class="range-sep">ถึง</span>
               <input type="date" id="reportTo" class="date-input" aria-label="ถึงวันที่">
             </div>
             <button class="btn btn-primary" onclick="applyReportFilter()">🔍 กรอง</button>
-            <button class="btn btn-secondary" onclick="showAllReport()">📚 ทั้งหมด</button>
             <button class="btn btn-secondary" onclick="loadReport()">🔄 รีเฟรช</button>
             <button class="btn btn-secondary" onclick="exportReportCsv()">⬇️ CSV</button>
             <button class="btn btn-secondary" onclick="exportReportXlsx()">⬇️ Excel</button>
@@ -704,6 +712,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=52"></script>
+  <script src="/app.js?v=53"></script>
 </body>
 </html>
