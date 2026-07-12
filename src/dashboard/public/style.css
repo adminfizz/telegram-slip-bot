@@ -1327,8 +1327,9 @@ body {
     grid-column: auto;
   }
 
+  /* chips ตัวกรองมี 7 อัน — คง 2 คอลัมน์แม้จอแคบ (1 คอลัมน์ยาวรกเต็มจอ) */
   #tab-report .page-header > div:last-child {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 
   .jobs-summary-grid {
