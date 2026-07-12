@@ -678,19 +678,30 @@ async function loadGroupMatch() {
 
 function populateGmAccounts(d) {
   const sel = document.getElementById('gmAccount');
-  if (!sel) return;
-  const cur = sel.value;
-  const accs = (d.accounts || []).map(a => a.last4).filter(x => x && x !== '-');
-  sel.innerHTML = '<option value="">ทุกบัญชี</option>'
-    + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}</option>`).join('');
-  sel.value = accs.includes(cur) ? cur : '';
+  if (sel) {
+    const cur = sel.value;
+    const accs = (d.accounts || []).map(a => a.last4).filter(x => x && x !== '-');
+    sel.innerHTML = '<option value="">ทุกบัญชี</option>'
+      + accs.map(a => `<option value="${escHtml(a)}">****${escHtml(a)}</option>`).join('');
+    sel.value = accs.includes(cur) ? cur : '';
+  }
+  // dropdown อิโมจิ จากข้อมูลจริงในช่วง (🔥 ก่อนเสมอ, ⏳ = ยังไม่มี react)
+  const esel = document.getElementById('gmEmoji');
+  if (esel) {
+    const cur = esel.value;
+    const opts = (d.byEmoji || []).map(e => e.emoji || '⏳');
+    esel.innerHTML = '<option value="">ทั้งหมด</option>'
+      + opts.map(e => `<option value="${escHtml(e)}">${escHtml(e === '⏳' ? '⏳ รอ react' : e)}</option>`).join('');
+    esel.value = opts.includes(cur) ? cur : '';
+  }
 }
 
 function gmSetView(v) {
   gmView = v;
-  const dEl = document.getElementById('gmv-day'), aEl = document.getElementById('gmv-account');
-  if (dEl) dEl.classList.toggle('chip-active', v === 'day');
-  if (aEl) aEl.classList.toggle('chip-active', v === 'account');
+  [['gmv-day', 'day'], ['gmv-account', 'account'], ['gmv-ann', 'ann']].forEach(([id, k]) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('chip-active', v === k);
+  });
   renderGroupMatch();
 }
 
@@ -743,10 +754,28 @@ function renderGmStats(sm) {
   if (!el) return;
   const tile = (label, value, sub, cls) => `<div class="gm-stat ${cls || ''}"><small>${label}</small><strong>${value}</strong>${sub ? `<span>${sub}</span>` : ''}</div>`;
   el.innerHTML =
-    tile('💰 ยอดประกาศ', fmtMoney(sm.announcedTotal) + ' ฿', `${sm.dayCount ?? 0} วัน · ${sm.accountCount ?? 0} บัญชี`) +
+    tile('🔥 ประกาศเข้าจับคู่', fmtMoney(sm.announcedTotal) + ' ฿', `${sm.fireCount ?? 0} รายการ · ${sm.accountCount ?? 0} บัญชี · ${sm.dayCount ?? 0} วัน`) +
     tile('📄 โอนจริง', fmtMoney(sm.transferredTotal) + ' ฿', `โอนครบ ${sm.okCount ?? 0} บัญชี`) +
     tile('⚠️ ยังขาด', fmtMoney(sm.shortTotal) + ' ฿', `ยังไม่โอน ${sm.noSlipCount ?? 0} · ไม่ครบ ${sm.shortCount ?? 0}`, 'gm-stat-bad') +
     tile('🏧 ถอน ATM', fmtMoney(sm.atmTotal) + ' ฿', `${sm.atmCount ?? 0} ใบ · ไม่นับกระทบยอด`, 'gm-stat-mut');
+}
+
+// แถบสรุปอิโมจิ (ทุกประกาศ ไม่ใช่แค่ไฟ) — คลิกเพื่อกรอง+เปิดมุมมองประกาศ
+function renderGmEmojiBar(byEmoji) {
+  const el = document.getElementById('gmEmojiBar');
+  if (!el) return;
+  if (!byEmoji || !byEmoji.length) { el.innerHTML = ''; return; }
+  el.innerHTML = byEmoji.map(e => {
+    const emo = e.emoji || '⏳';
+    const label = emo === '⏳' ? '⏳ รอ react' : emo;
+    return `<button class="gm-emoji-chip${emo === '🔥' ? ' gm-emoji-fire' : ''}" onclick="gmPickEmoji('${escHtml(emo)}')" title="ดูรายการประกาศอิโมจิ ${escHtml(label)}">
+      ${escHtml(label)} <b>${e.count}</b> · ${fmtMoney(e.total)} ฿${emo === '🔥' ? ' <small>เข้าจับคู่</small>' : ''}</button>`;
+  }).join('');
+}
+function gmPickEmoji(emo) {
+  const sel = document.getElementById('gmEmoji');
+  if (sel) sel.value = emo;
+  gmSetView('ann');
 }
 
 // ── กราฟรายวัน: ประกาศ vs โอนจริง (แท่งคู่แนวนอน คลิกวันเพื่อเจาะ) ──
@@ -783,12 +812,25 @@ function gmDayCard(d) {
   return `<div class="info-card gm-day-card">
     <div class="gm-day-head">
       <div class="gm-day-title"><h3>📅 ${gmThaiDate(d.date)}</h3><span class="gm-day-iso">${escHtml(d.date)}</span></div>
-      <div class="gm-day-sum">ประกาศ <b>${fmtMoney(d.announced)}</b> ฿ <small>(${d.announceCount} รายการ)</small> · โอนจริง <b>${fmtMoney(d.transferred)}</b> ฿ <small>(${d.slipCount} สลิป)</small>${short}</div>
+      <div class="gm-day-sum">ประกาศ 🔥 <b>${fmtMoney(d.announced)}</b> ฿ <small>(${d.announceCount} รายการ)</small> · โอนจริง <b>${fmtMoney(d.transferred)}</b> ฿ <small>(${d.slipCount} สลิป)</small>${short}</div>
       <div class="gm-day-badges">✅ ครบ ${d.okCount} · 🔴 ยังไม่โอน ${d.noSlipCount} · 🟠 ไม่ครบ ${d.shortCount} · 🟡 เกิน ${d.overCount} · 🔵 ไม่มีประกาศ ${d.slipOnlyCount}${d.atmCount ? ` · 🏧 ATM ${d.atmCount}` : ''}</div>
+      ${(d.byEmoji && d.byEmoji.length) ? `<div class="gm-day-emoji">${d.byEmoji.map(e => `${escHtml(e.emoji || '⏳')} ${e.count}·${fmtMoney(e.total)}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}
     </div>
     ${main.length ? `<div class="tx-table gm-table">${GM_TABLE_HEAD}${rows}</div>` : (stFilter ? '<div class="empty-state" style="padding:6px 0;">ไม่มีบัญชีตามตัวกรองในวันนี้</div>' : '<div class="gm-day-clear">🎉 วันนี้กระทบยอดครบทุกบัญชี</div>')}
     ${okBlock}
   </div>`;
+}
+
+// แถวรายการประกาศรายตัว (มุมมอง 📃 ประกาศ)
+function gmAnnRow(a) {
+  const emo = a.emoji || '⏳';
+  return `<div class="tx-row gm-ann-row${a.fire ? ' gm-ann-fire' : ''}">
+    <span>${escHtml(a.date || '')}${a.time ? ' ' + escHtml(a.time) : ''}</span>
+    <span><strong>****${escHtml(a.last4 || '-')}</strong>${a.name ? ` <span class="acc-bank">${escHtml(a.name)}</span>` : ''}</span>
+    <span>${escHtml(a.bank || '-')}</span>
+    <span>${fmtMoney(a.amount)}</span>
+    <span class="gm-ann-emo" title="${escHtml(a.reacts || '')}">${escHtml(a.reacts || emo)}</span>
+    <span>${a.fire ? '🔥 เข้าจับคู่' : '<span class="acc-bank">ไม่จับคู่</span>'}</span></div>`;
 }
 
 function renderGroupMatch() {
@@ -796,12 +838,24 @@ function renderGroupMatch() {
   if (!box || !gmData) return;
   const d = gmData;
   renderGmStats(d.summary || {});
+  renderGmEmojiBar(d.byEmoji || []);
   renderGmChart(d.days || []);
   if (gmView === 'account') {
     const accounts = gmFilterAccounts(d.accounts);
     box.innerHTML = accounts.length
-      ? `<div class="info-card"><h3>กระทบยอดรายบัญชี (รวมทั้งช่วง) <span class="subtitle">เรียงบัญชีที่มีปัญหาก่อน</span></h3><div class="tx-table gm-table">${GM_TABLE_HEAD}${accounts.map(gmAcctRow).join('')}</div></div>`
+      ? `<div class="info-card"><h3>กระทบยอดรายบัญชี 🔥 (รวมทั้งช่วง) <span class="subtitle">เฉพาะประกาศติดไฟ · เรียงบัญชีที่มีปัญหาก่อน</span></h3><div class="tx-table gm-table">${GM_TABLE_HEAD}${accounts.map(gmAcctRow).join('')}</div></div>`
       : '<div class="info-card empty-state">ไม่พบบัญชีตามตัวกรอง</div>';
+  } else if (gmView === 'ann') {
+    const acc = document.getElementById('gmAccount')?.value || '';
+    const emo = document.getElementById('gmEmoji')?.value || '';
+    let list = d.announcements || [];
+    if (acc) list = list.filter(a => a.last4 === acc);
+    if (emo) list = list.filter(a => (a.emoji || '⏳') === emo);
+    const total = list.reduce((t, a) => t + (Number(a.amount) || 0), 0);
+    const head = '<div class="tx-row tx-head"><span>วัน/เวลา</span><span>บัญชี / ชื่อ</span><span>ธนาคาร</span><span>ยอด</span><span>react</span><span>จับคู่</span></div>';
+    box.innerHTML = list.length
+      ? `<div class="info-card"><h3>📃 รายการประกาศ ${emo ? escHtml(emo === '⏳' ? '⏳ รอ react' : emo) + ' ' : ''}· ${list.length} รายการ <span class="subtitle">รวม ${fmtMoney(total)} ฿</span></h3><div class="tx-table gm-ann-table">${head}${list.map(gmAnnRow).join('')}</div></div>`
+      : '<div class="info-card empty-state">ไม่พบประกาศตามตัวกรอง</div>';
   } else {
     const days = d.days || [];
     box.innerHTML = days.length ? days.map(gmDayCard).join('') : '<div class="info-card empty-state">ไม่พบข้อมูลในช่วงที่เลือก</div>';
@@ -1267,27 +1321,46 @@ const fmtMoney = (v) => Number(v || 0).toLocaleString('en-US', { minimumFraction
 const fmtNum = (v) => Number(v || 0).toLocaleString('en-US');
 
 // === การ์ดสรุปวันนี้ ===
+let dayCardSel = 'today';   // 'today' | 'yesterday' | 'YYYY-MM-DD' — การ์ดใบแรกดูวันไหน
+let monthCardSel = null;    // null = เดือนปัจจุบัน (live) | 'YYYY-MM'
+
+function fillDayCard(t) {
+  setNumber('todayTotal', t.total, true);
+  setNumber('todayCount', t.count, false);
+  setNumber('todayTransfer', t.transfer, true);
+  setNumber('todayWithdraw', t.withdraw, true);
+  setNumber('todayDeposit', t.deposit, true);
+  setNumber('todayFee', t.fee, true);
+}
+function fillMonthCard(m) {
+  setNumber('monthTotal', m.total, true);
+  setNumber('monthCount', m.count, false);
+  setNumber('monthTransfer', m.transfer, true);
+  setNumber('monthWithdraw', m.withdraw, true);
+  setNumber('monthDeposit', m.deposit, true);
+  setNumber('monthFee', m.fee, true);
+}
+// รวมยอดจาก /api/report (per-account) → มิติเดียวกับการ์ด
+function computeReportSums(rep) {
+  let total = 0, count = 0, transfer = 0, withdraw = 0, deposit = 0, fee = 0;
+  Object.entries(rep || {}).forEach(([k, a]) => {
+    if (k.startsWith('_')) return;
+    total += Number(a.total || 0); transfer += Number(a.transferSum || 0);
+    withdraw += Number(a.withdrawSum || 0); deposit += Number(a.depositSum || 0); fee += Number(a.feeSum || 0);
+    count += Number(a.transferCount || 0) + Number(a.withdrawCount || 0) + Number(a.depositCount || 0) + Number(a.billCount || 0) + Number(a.otherCount || 0);
+  });
+  return { total, count, transfer, withdraw, deposit, fee };
+}
+
 async function loadToday() {
   try {
     const res = await fetch('/api/today', { cache: 'no-store' });
     const d = await res.json();
     if (!d.ok || !d.today) return;
-    const t = d.today;
-    setNumber('todayTotal', t.total, true);
-    setNumber('todayCount', t.count, false);
-    setNumber('todayTransfer', t.transfer, true);
-    setNumber('todayWithdraw', t.withdraw, true);
-    setNumber('todayDeposit', t.deposit, true);
-    setNumber('todayFee', t.fee, true);
+    if (dayCardSel === 'today') fillDayCard(d.today); // ไม่ทับตอนผู้ใช้เลือกดูวันอื่นอยู่
     setText('todayUpdated', d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString('th-TH') : '');
-    if (d.month) {
-      const m = d.month;
-      setNumber('monthTotal', m.total, true);
-      setNumber('monthCount', m.count, false);
-      setNumber('monthTransfer', m.transfer, true);
-      setNumber('monthWithdraw', m.withdraw, true);
-      setNumber('monthDeposit', m.deposit, true);
-      setNumber('monthFee', m.fee, true);
+    if (d.month && !monthCardSel) {
+      fillMonthCard(d.month);
       setText('monthLabel', d.monthLabel || '');
     }
     lastTodayData = d;
@@ -1295,10 +1368,58 @@ async function loadToday() {
   } catch (_) {}
 }
 
+// การ์ดใบแรก: วันนี้ / เมื่อวาน / เลือกวันที่
+async function setDayCard(sel) {
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  dayCardSel = sel || 'today';
+  const dcDate = document.getElementById('dcDate');
+  ['dc-today', 'dc-yesterday'].forEach(id => document.getElementById(id)?.classList.remove('chip-active'));
+  if (dayCardSel === 'today') {
+    document.getElementById('dc-today')?.classList.add('chip-active');
+    if (dcDate) dcDate.value = '';
+    setText('dayCardLabel', 'วันนี้');
+    loadToday();
+    return;
+  }
+  let date;
+  if (dayCardSel === 'yesterday') {
+    const y = new Date(); y.setDate(y.getDate() - 1); date = fmt(y);
+    document.getElementById('dc-yesterday')?.classList.add('chip-active');
+    if (dcDate) dcDate.value = '';
+    setText('dayCardLabel', 'เมื่อวาน');
+  } else {
+    date = dayCardSel;
+    setText('dayCardLabel', gmThaiDate(date));
+  }
+  try {
+    const res = await fetch(`/api/report?date=${date}`, { cache: 'no-store' });
+    const d = await res.json();
+    fillDayCard(computeReportSums(d.ok && d.report));
+  } catch (_) {}
+}
+
+// การ์ดใบสอง: เลือกเดือนได้
+async function setMonthCard(month) {
+  if (!/^\d{4}-\d{2}$/.test(String(month || ''))) { monthCardSel = null; loadToday(); return; }
+  const now = new Date();
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (month === curMonth) { monthCardSel = null; setText('monthLabel', month); loadToday(); return; }
+  monthCardSel = month;
+  const [y, mo] = month.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  try {
+    const res = await fetch(`/api/report?from=${month}-01&to=${month}-${String(lastDay).padStart(2, '0')}`, { cache: 'no-store' });
+    const d = await res.json();
+    fillMonthCard(computeReportSums(d.ok && d.report));
+    setText('monthLabel', month);
+  } catch (_) {}
+}
+
 // === กราฟสัดส่วน โอน/ถอน/ฝาก/อื่นๆ (จากข้อมูล today/month) ===
 let lastTodayData = null;
 let typeChartScope = 'month';
 let allTypeSummary = null; // สรุปประเภท "ทั้งหมด" (โหลดครั้งแรกที่กด)
+let customTypeSummary = null; // สรุปประเภทของวันที่เลือกเอง (yesterday / date)
 async function setTypeChartScope(s) {
   typeChartScope = s;
   if (s === 'all' && !allTypeSummary) {
@@ -1306,23 +1427,34 @@ async function setTypeChartScope(s) {
       const res = await fetch('/api/report?date=all', { cache: 'no-store' });
       const d = await res.json();
       const rep = (d.ok && d.report) || {};
-      let tr = 0, wd = 0, dp = 0, bill = 0, ot = 0, tot = 0;
-      Object.entries(rep).forEach(([k, a]) => { if (k.startsWith('_')) return; tr += +a.transferSum || 0; wd += +a.withdrawSum || 0; dp += +a.depositSum || 0; bill += +a.billSum || 0; ot += +a.otherSum || 0; tot += +a.total || 0; });
-      allTypeSummary = { total: tot, transfer: tr, withdraw: wd, deposit: dp };
+      const x = computeReportSums(rep);
+      allTypeSummary = { total: x.total, transfer: x.transfer, withdraw: x.withdraw, deposit: x.deposit };
     } catch (_) { allTypeSummary = { total: 0, transfer: 0, withdraw: 0, deposit: 0 }; }
+  }
+  // เมื่อวาน หรือเลือกวันที่เอง (scope = 'yesterday' | 'date:YYYY-MM-DD') → ดึงจาก report ของวันนั้น
+  if (s === 'yesterday' || String(s).startsWith('date:')) {
+    let date;
+    if (s === 'yesterday') { const y = new Date(); y.setDate(y.getDate() - 1); date = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`; }
+    else date = s.slice(5);
+    try {
+      const res = await fetch(`/api/report?date=${date}`, { cache: 'no-store' });
+      const d = await res.json();
+      customTypeSummary = computeReportSums((d.ok && d.report) || {});
+    } catch (_) { customTypeSummary = { total: 0, transfer: 0, withdraw: 0, deposit: 0 }; }
   }
   renderTypeChart();
 }
 function renderTypeChart() {
   const box = document.getElementById('typeChart');
   if (!box) return;
-  ['today', 'month', 'all'].forEach(k => {
+  ['today', 'yesterday', 'month', 'all'].forEach(k => {
     const el = document.getElementById('typeChart' + k.charAt(0).toUpperCase() + k.slice(1));
     if (el) el.classList.toggle('chip-active', typeChartScope === k);
   });
   let s;
   if (typeChartScope === 'all') s = allTypeSummary || {};
   else if (typeChartScope === 'today') s = (lastTodayData && lastTodayData.today) || {};
+  else if (typeChartScope === 'yesterday' || String(typeChartScope).startsWith('date:')) s = customTypeSummary || {};
   else s = (lastTodayData && lastTodayData.month) || {};
   const other = Math.max(0, Number(s.total || 0) - Number(s.transfer || 0) - Number(s.withdraw || 0) - Number(s.deposit || 0));
   const rows = [
@@ -1356,6 +1488,9 @@ async function loadAccountChart(period) {
     const el = document.getElementById('acctChart' + k.charAt(0).toUpperCase() + k.slice(1));
     if (el) el.classList.toggle('chip-active', acctChartPeriod === k);
   });
+  // เลือกจาก chip → ล้าง date picker (period แบบ date: มาจาก picker เท่านั้น)
+  const acDate = document.getElementById('acctChartDate');
+  if (acDate && !String(acctChartPeriod).startsWith('date:')) acDate.value = '';
   try {
     let url = '/api/report';
     const now = new Date();
@@ -1365,6 +1500,7 @@ async function loadAccountChart(period) {
     else if (acctChartPeriod === 'yesterday') { const y = new Date(now); y.setDate(now.getDate() - 1); url += `?date=${fmtD(y)}`; }
     else if (acctChartPeriod === '7d') { const s = new Date(now); s.setDate(now.getDate() - 6); url += `?from=${fmtD(s)}&to=${td}`; }
     else if (acctChartPeriod === 'month') url += `?from=${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01&to=${td}`;
+    else if (String(acctChartPeriod).startsWith('date:')) url += `?date=${acctChartPeriod.slice(5)}`;
     else url += '?date=all';
     const res = await fetch(url, { cache: 'no-store' });
     const d = await res.json();
@@ -1385,16 +1521,23 @@ async function loadAccountChart(period) {
 }
 
 // === แนวโน้มรายวัน (กราฟเส้น + พื้นไล่เฉด SVG) ===
-async function loadTrends(days = 7) {
+async function loadTrends(days = 7, range = null) {
   const box = document.getElementById('trendsChart');
   if (!box) return;
   try {
-    const res = await fetch(`/api/trends?days=${days}`, { cache: 'no-store' });
+    const qs = range ? `from=${range.from}&to=${range.to}` : `days=${days}`;
+    const res = await fetch(`/api/trends?${qs}`, { cache: 'no-store' });
     const d = await res.json();
     const data = (d.ok && d.trends) || [];
     if (data.length === 0) { box.innerHTML = '<div class="prov-empty">ยังไม่มีข้อมูล</div>'; return; }
     box.innerHTML = renderTrendArea(data);
   } catch (_) { box.innerHTML = '<div class="prov-empty">โหลดไม่สำเร็จ</div>'; }
+}
+// เลือกช่วงแนวโน้มเอง (from–to)
+function loadTrendsRange() {
+  const from = document.getElementById('trFrom')?.value, to = document.getElementById('trTo')?.value;
+  if (!from || !to) return showToast('เลือกวันที่ให้ครบทั้ง จาก–ถึง', 'info');
+  loadTrends(0, { from, to });
 }
 
 function renderTrendArea(data) {

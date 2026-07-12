@@ -1201,19 +1201,31 @@ async function getReport(auth, spreadsheetId, targetLast4 = null, targetDate = n
 }
 
 // แนวโน้มรายวัน N วันล่าสุด: จำนวนสลิป + ยอดรวม ต่อวัน (อ่าน 1 batchGet)
-async function getTrends(auth, spreadsheetId, days = 7) {
+async function getTrends(auth, spreadsheetId, days = 7, range = null) {
   const sheets = sheetsClient(auth);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const sheetNames = getAccountTabNamesFromMeta(meta);
-  // เตรียม bucket ของ N วันล่าสุด (ตามเวลาไทย)
+  // เตรียม bucket: ช่วง from–to ที่เลือกเอง (สูงสุด 92 วัน) หรือ N วันล่าสุด (ตามเวลาไทย)
   const buckets = {};
   const order = [];
-  const today = new Date(getTodayStr() + 'T00:00:00+07:00');
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today.getTime() - i * 86400000);
-    const key = getTodayStr(d);
-    buckets[key] = { date: key, count: 0, amount: 0 };
-    order.push(key);
+  if (range && range.from && range.to) {
+    let cur = new Date(range.from + 'T00:00:00+07:00');
+    const end = new Date(range.to + 'T00:00:00+07:00');
+    let guard = 0;
+    while (cur <= end && guard++ < 92) {
+      const key = getTodayStr(cur);
+      buckets[key] = { date: key, count: 0, amount: 0 };
+      order.push(key);
+      cur = new Date(cur.getTime() + 86400000);
+    }
+  } else {
+    const today = new Date(getTodayStr() + 'T00:00:00+07:00');
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today.getTime() - i * 86400000);
+      const key = getTodayStr(d);
+      buckets[key] = { date: key, count: 0, amount: 0 };
+      order.push(key);
+    }
   }
   if (sheetNames.length === 0) return order.map(k => buckets[k]);
   let valueRanges = [];

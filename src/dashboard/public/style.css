@@ -1638,6 +1638,26 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 .gm-day-sum b { color: var(--text-primary); }
 .gm-day-badges { margin-top: 4px; font-size: 12px; color: var(--text-secondary); }
 .gm-day-clear { padding: 8px 0 2px; color: var(--text-secondary); font-size: 13px; }
+.gm-day-emoji { margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+
+/* filter ในการ์ด/กราฟหน้า Dashboard */
+.date-mini { min-height: 30px; padding: 3px 8px; font-size: 12px; width: auto; max-width: 140px; }
+.card-filter { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.card-filter .btn-chip { padding: 3px 10px; min-height: 28px; font-size: 12px; }
+.today-head { flex-wrap: wrap; gap: 6px; }
+.trends-range { flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* แถบสรุปอิโมจิ + ตารางรายการประกาศ */
+.gm-emoji-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.gm-emoji-chip { background: var(--bg-card); border: 1px solid var(--border); border-radius: 20px; padding: 6px 12px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; }
+.gm-emoji-chip b { color: var(--text-primary); }
+.gm-emoji-chip:hover { border-color: var(--accent, #3d7bff); }
+.gm-emoji-fire { border-color: rgba(251,146,60,.55); background: rgba(251,146,60,.08); }
+.gm-emoji-fire small { color: #fdba74; }
+.gm-ann-table .tx-row { grid-template-columns: 118px minmax(150px,1.6fr) 80px 100px minmax(90px,1fr) 110px; }
+.gm-ann-fire { background: rgba(251,146,60,.05); }
+.gm-ann-emo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 820px) { .gm-ann-table .tx-row { grid-template-columns: 1fr 1fr; } }
 .gm-ok-details { margin-top: 8px; }
 .gm-ok-details summary { cursor: pointer; font-size: 12.5px; color: var(--text-secondary); padding: 4px 0; }
 .gm-ok-details summary:hover { color: var(--text-primary); }

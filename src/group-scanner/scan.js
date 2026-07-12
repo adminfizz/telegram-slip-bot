@@ -28,6 +28,14 @@ function toRecords(msg) {
   const recs = parseGroupMessage(text);
   // เก็บ date/time เป็นเวลาไทย (Asia/Bangkok, +7) ให้ตรงกับที่บอท OCR เก็บสลิป — กัน dayDiff/ขอบเดือนเพี้ยน
   const bkk = new Date((msg.date + 7 * 3600) * 1000);
+  // reaction ของข้อความ (ติดทั้งข้อความ — ทุก record ในลิสต์เดียวกันได้ค่าเดียวกัน)
+  // 🔥 = รูปแบบที่ต้องจับคู่กับสลิป OCR; custom emoji เก็บเป็น custom:<id>
+  const rx = (msg.reactions && msg.reactions.results) ? msg.reactions.results : [];
+  const reacts = rx.map(r => {
+    const emo = r.reaction && r.reaction.emoticon ? r.reaction.emoticon : (r.reaction && r.reaction.documentId ? 'custom:' + r.reaction.documentId : '?');
+    return emo + 'x' + (r.count || 1);
+  }).join(' ');
+  const fire = rx.some(r => r.reaction && r.reaction.emoticon === '🔥');
   return recs.map((r, idx) => ({
     ...r,
     msg_id: msg.id,
@@ -35,6 +43,7 @@ function toRecords(msg) {
     date: bkk.toISOString().slice(0, 10),
     time: bkk.toISOString().slice(11, 16),
     ts: msg.date,
+    reacts, fire,
   }));
 }
 

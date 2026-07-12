@@ -1389,16 +1389,25 @@ pin.focus();
   // แนวโน้มรายวัน
   app.get('/api/trends', async (req, res) => {
     try {
-      const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 31));
+      const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 92));
+      // ช่วงวันที่เลือกเอง (from&to) — cache แยก key ตามช่วง
+      const isD = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+      let range = null;
+      if (isD(req.query.from) && isD(req.query.to)) {
+        let f = String(req.query.from), t = String(req.query.to);
+        if (f > t) { const x = f; f = t; t = x; }
+        range = { from: f, to: t };
+      }
+      const cacheKey = range ? `${range.from}~${range.to}` : String(days);
       const now = Date.now();
-      if (trendsCache && trendsCache.days === days && now - trendsCache.at < TRENDS_CACHE_MS) {
+      if (trendsCache && trendsCache.days === cacheKey && now - trendsCache.at < TRENDS_CACHE_MS) {
         return res.json({ ...trendsCache.payload, cached: true });
       }
       const ctx = await ensureGoogleContext();
       const { getTrends } = require('../sheets');
-      const trends = await getTrends(ctx.authClient, ctx.spreadsheetId, days);
-      const payload = { ok: true, days, trends, fetchedAt: new Date().toISOString() };
-      trendsCache = { at: now, days, payload };
+      const trends = await getTrends(ctx.authClient, ctx.spreadsheetId, days, range);
+      const payload = { ok: true, days: trends.length, range, trends, fetchedAt: new Date().toISOString() };
+      trendsCache = { at: now, days: cacheKey, payload };
       res.json(payload);
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
@@ -1615,9 +1624,24 @@ pin.focus();
 
       // 1) ประกาศกลุ่มในช่วง (เฉพาะที่ครบ ยอด+บัญชี+ธนาคาร)
       const gAll = await getGroupRecords(ctx.authClient, ctx.spreadsheetId, { from: lo, to: hi });
+      // อิโมจิหลักของประกาศ: 🔥 มาก่อนเสมอ (= เข้าจับคู่สลิป) · ไม่มี react = '' (รอ react) · custom ล้วน = อื่นๆ
+      const primaryEmoji = (g) => {
+        if (g.fire) return '🔥';
+        const s = String(g.reacts || '').trim();
+        if (!s) return '';
+        let best = '', bestC = -1;
+        s.split(/\s+/).forEach(tok => {
+          const m = tok.match(/^(.+)x(\d+)$/);
+          const emo = m ? m[1] : tok, c = m ? Number(m[2]) : 1;
+          if (!emo.startsWith('custom:') && emo !== '?' && c > bestC) { best = emo; bestC = c; }
+        });
+        return best || 'อื่นๆ';
+      };
       const groups = gAll.filter(g => g.usable && g.amount != null && g.last4)
         .filter(g => !last4q || normAcc(g.last4) === normAcc(last4q))
-        .map(g => ({ date: g.date, time: g.time, amount: round2(g.amount), last4: normAcc(g.last4), bank: g.bank || '', name: g.name || '', key: g.key }));
+        .map(g => ({ date: g.date, time: g.time, amount: round2(g.amount), last4: normAcc(g.last4), bank: g.bank || '', name: g.name || '', user: g.user || '', key: g.key, reacts: g.reacts || '', fire: !!g.fire, emoji: primaryEmoji(g) }));
+      // เข้าจับคู่สลิปเฉพาะประกาศที่มีไฟ 🔥 (อิโมจิอื่น = โอนคนละรูปแบบ ไม่นับขาดสลิป)
+      const fireGroups = groups.filter(g => g.fire);
 
       // 2) สลิป OCR ในช่วงเดียวกัน
       const { listTransactions } = require('../sheets');
@@ -1672,12 +1696,26 @@ pin.focus();
         return accounts;
       }
 
-      const accounts = reconcile(groups, slipsTransfer);
+      const accounts = reconcile(fireGroups, slipsTransfer);
 
-      // รายวัน: กระทบยอด "ภายในวันเดียวกัน" (กติกากลุ่ม = โอนภายใน 1 ชม. → วันเดียวกัน)
+      // สรุปแยกตามอิโมจิ (นับ "ทุกประกาศ" ไม่ใช่แค่ไฟ) — บอกว่าอิโมจิไหน กี่รายการ ยอดเท่าไหร่
+      const emojiOf = (arr) => {
+        const m = new Map();
+        arr.forEach(g => {
+          const e = g.emoji || '⏳';
+          let x = m.get(e);
+          if (!x) { x = { emoji: e, count: 0, total: 0 }; m.set(e, x); }
+          x.count++; x.total = round2(x.total + g.amount);
+        });
+        return [...m.values()].sort((a, b) => (a.emoji === '🔥' ? -1 : b.emoji === '🔥' ? 1 : b.total - a.total));
+      };
+      const byEmoji = emojiOf(groups);
+
+      // รายวัน: กระทบยอด "ภายในวันเดียวกัน" (กติกากลุ่ม = โอนภายใน 1 ชม. → วันเดียวกัน) — เฉพาะประกาศไฟ
       const dayKeys = [...new Set([...groups.map(g => g.date), ...slipsTransfer.map(s => s.day)])].filter(Boolean).sort().reverse();
       const days = dayKeys.map(date => {
-        const dg = groups.filter(g => g.date === date);
+        const dgAll = groups.filter(g => g.date === date);
+        const dg = dgAll.filter(g => g.fire);
         const ds = slipsTransfer.filter(s => s.day === date);
         const dAtm = slipsAtm.filter(s => s.day === date);
         const acc = reconcile(dg, ds);
@@ -1691,6 +1729,7 @@ pin.focus();
           okCount: c('ok'), shortCount: c('short'), overCount: c('over'), noSlipCount: c('no_slip'), slipOnlyCount: c('slip_only'),
           atmCount: dAtm.length, atmTotal: round2(dAtm.reduce((t, s) => t + s.amount, 0)),
           accounts: acc,
+          byEmoji: emojiOf(dgAll),   // อิโมจิทั้งหมดของวันนั้น (รวมที่ไม่ใช่ไฟ)
         };
       });
 
@@ -1708,9 +1747,14 @@ pin.focus();
           overTotal: round2(-sumF(a => a.status === 'over' || a.status === 'slip_only', a => a.diff)),   // ยอดที่เกิน
           atmCount: slipsAtm.length, atmTotal: round2(slipsAtm.reduce((t, s) => t + s.amount, 0)),
           dayCount: days.length,
+          // อิโมจิ: กระทบยอดใช้เฉพาะ 🔥 — ตัวเลขอื่นแสดงเพื่อรู้ว่าโอนรูปแบบอื่นเท่าไหร่
+          fireCount: fireGroups.length, fireTotal: round2(fireGroups.reduce((t, g) => t + g.amount, 0)),
+          announceAllCount: groups.length, announceAllTotal: round2(groups.reduce((t, g) => t + g.amount, 0)),
         },
+        byEmoji,
         accounts,
         days,
+        announcements: groups.map(g => ({ date: g.date, time: g.time, name: g.name, bank: g.bank, last4: g.last4, amount: g.amount, user: g.user || '', reacts: g.reacts, fire: g.fire, emoji: g.emoji })),
         atm: slipsAtm.map(s => ({ day: s.day, time: s.time, amount: s.amount, last4: s.last4, bank: s.bankCode || s.bank })),
         fetchedAt: new Date().toISOString(),
       };
@@ -1735,17 +1779,24 @@ pin.focus();
         ['โอนไม่ครบ', st.shortCount, ''],
         ['โอนเกินประกาศ', st.overCount, ''],
         ['โอนไม่มีประกาศ', st.slipOnlyCount, ''],
-        ['ยอดประกาศรวม', '', st.announcedTotal],
+        ['ยอดประกาศ 🔥 (เข้าจับคู่)', st.fireCount ?? '', st.fireTotal ?? st.announcedTotal],
+        ['ยอดประกาศทุกอิโมจิ', st.announceAllCount ?? '', st.announceAllTotal ?? ''],
         ['ยอดโอนจริงรวม', '', st.transferredTotal],
         ['ยอดที่ยังขาด', '', st.shortTotal],
-        ['ถอน ATM (ไม่นับ)', st.atmCount, st.atmTotal]];
+        ['ถอน ATM (ไม่นับ)', st.atmCount, st.atmTotal],
+        [],
+        ['แยกตามอิโมจิ', 'จำนวน', 'ยอดรวม'],
+        ...((d.byEmoji || []).map(e => [(e.emoji || '⏳ รอ react') + (e.emoji === '🔥' ? ' (เข้าจับคู่)' : ''), e.count, e.total]))];
       const accRows = [['เลขบัญชี', 'ชื่อ', 'ธนาคาร', 'ยอดประกาศ', 'จำนวนประกาศ', 'ยอดโอนจริง', 'จำนวนสลิป', 'ส่วนต่าง', 'สถานะ']];
       d.accounts.forEach(a => accRows.push([a.last4, a.name, a.bank, a.announced, a.announceCount, a.transferred, a.slipCount, a.diff, label[a.status] || a.status]));
       const dayRows = [['วันที่', 'ยอดประกาศ', 'จำนวนประกาศ', 'ยอดโอนจริง', 'จำนวนสลิป', 'ยังขาด', 'โอนครบ(บัญชี)', 'ยังไม่โอน', 'โอนไม่ครบ', 'โอนเกิน', 'ถอน ATM']];
       (d.days || []).forEach(x => dayRows.push([x.date, x.announced, x.announceCount, x.transferred, x.slipCount, x.shortTotal, x.okCount, x.noSlipCount, x.shortCount, x.overCount, x.atmCount]));
+      const annRows = [['วันที่', 'เวลา', 'ชื่อ', 'ธนาคาร', 'เลขบัญชี', 'ยอด', 'ยูสเซอร์', 'อิโมจิ', 'เข้าจับคู่(🔥)']];
+      (d.announcements || []).forEach(a => annRows.push([a.date, a.time, a.name, a.bank, a.last4, a.amount, a.user, a.reacts || (a.emoji || ''), a.fire ? '✓' : '']));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumRows), 'สรุป');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dayRows), 'รายวัน');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(accRows), 'กระทบยอดรายบัญชี');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(annRows), 'รายการประกาศ');
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="groupmatch.xlsx"');

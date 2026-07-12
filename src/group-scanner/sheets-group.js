@@ -3,9 +3,10 @@
 const { google } = require('googleapis');
 
 const TAB = '_group';
-// คอลัมน์: A=key B=date C=time D=ts E=name F=bank G=account H=last4 I=amount J=user K=company L=usable M=raw
-const HEADER = ['key', 'date', 'time', 'ts', 'name', 'bank', 'account', 'last4', 'amount', 'user', 'company', 'usable', 'raw'];
-const RANGE = `${TAB}!A:M`;
+// คอลัมน์: A=key B=date C=time D=ts E=name F=bank G=account H=last4 I=amount J=user K=company L=usable M=raw N=reacts O=fire
+// reacts = reaction ของ "ทั้งข้อความ" (เช่น "🔥x1 ⚡x2") — ทุก record ในข้อความเดียวกันได้ค่าเดียวกัน
+const HEADER = ['key', 'date', 'time', 'ts', 'name', 'bank', 'account', 'last4', 'amount', 'user', 'company', 'usable', 'raw', 'reacts', 'fire'];
+const RANGE = `${TAB}!A:O`;
 
 function client(auth) { return google.sheets({ version: 'v4', auth }); }
 
@@ -23,10 +24,11 @@ async function ensureGroupTab(auth, spreadsheetId) {
       spreadsheetId,
       requestBody: { requests: [{ addSheet: { properties: { title: TAB, hidden: true, gridProperties: { frozenRowCount: 1 } } } }] },
     });
-    await sheets.spreadsheets.values.update({
-      spreadsheetId, range: `${TAB}!A1:M1`, valueInputOption: 'RAW', resource: { values: [HEADER] },
-    });
   }
+  // เขียน header ทุกครั้งที่ ensure (ครั้งแรกต่อ process) — อัปเกรดหัวคอลัมน์อัตโนมัติเมื่อเพิ่มคอลัมน์ใหม่
+  await sheets.spreadsheets.values.update({
+    spreadsheetId, range: `${TAB}!A1:O1`, valueInputOption: 'RAW', resource: { values: [HEADER] },
+  });
   tabReady.add(spreadsheetId);
 }
 
@@ -77,13 +79,14 @@ async function _appendGroupRecords(auth, spreadsheetId, records) {
   return { added: rows.length, skipped };
 }
 
-// สร้างแถว (13 คอลัมน์ A-M) จาก record เดียว
+// สร้างแถว (15 คอลัมน์ A-O) จาก record เดียว
 function rowOf(r) {
   return [
     `${r.msg_id}.${r.rec_idx}`, r.date || '', r.time || '', String(r.ts || ''),
     r.name || '', r.bank || r.bankRaw || '', r.account || '', r.last4 || '',
     r.amount == null ? '' : r.amount, r.user || '', r.company || '',
     r.usable ? '1' : '0', (r.raw || '').slice(0, 500),
+    r.reacts || '', r.fire ? '1' : '0',
   ];
 }
 
@@ -101,7 +104,7 @@ async function _replaceInRange(auth, spreadsheetId, records, sinceDate) {
   const sheets = client(auth);
   let existing = [];
   try {
-    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TAB}!A2:M`, valueRenderOption: 'UNFORMATTED_VALUE' });
+    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TAB}!A2:O`, valueRenderOption: 'UNFORMATTED_VALUE' });
     existing = (r.data.values || []).map(row => row.map(c => (c == null ? '' : String(c))));
   } catch (_) {}
   const dateOf = row => String(row[1] || '');
@@ -123,7 +126,7 @@ async function _replaceInRange(auth, spreadsheetId, records, sinceDate) {
     }
   }
   if (existing.length > allRows.length) {
-    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${TAB}!A${allRows.length + 2}:M${existing.length + 1}` });
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${TAB}!A${allRows.length + 2}:O${existing.length + 1}` });
   }
   keyCache.set(spreadsheetId, new Set(allRows.map(row => String(row[0]))));
   return { total: allRows.length, kept: keep.length, replaced: newRows.length, removed: Math.max(0, inRangeOld - newRows.length) };
@@ -134,7 +137,7 @@ async function getGroupRecords(auth, spreadsheetId, { from = null, to = null } =
   const sheets = client(auth);
   let values = [];
   try {
-    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TAB}!A2:M` });
+    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TAB}!A2:O` });
     values = r.data.values || [];
   } catch (_) { return []; }
   const out = [];
@@ -149,6 +152,7 @@ async function getGroupRecords(auth, spreadsheetId, { from = null, to = null } =
       name: row[4] || '', bank: row[5] || '', account: row[6] || '', last4: row[7] || '',
       amount: (row[8] === '' || row[8] == null) ? null : num(row[8]), user: row[9] || '', company: row[10] || '',
       usable: String(row[11]) === '1', raw: row[12] || '',
+      reacts: row[13] || '', fire: String(row[14]) === '1',
     });
   }
   return out;

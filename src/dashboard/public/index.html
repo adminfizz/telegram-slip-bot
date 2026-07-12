@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=55" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=56" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=55">
+  <link rel="stylesheet" href="/style.css?v=56">
 </head>
 <body>
   <!-- Loading screen -->
@@ -106,7 +106,13 @@
         <!-- การ์ดสรุป วันนี้ + เดือนนี้ -->
         <div class="summary-cards">
           <div class="today-card" id="todayCard">
-            <div class="today-head"><span>📅 วันนี้</span><small id="todayUpdated"></small></div>
+            <div class="today-head"><span>📅 <span id="dayCardLabel">วันนี้</span></span>
+              <span class="card-filter">
+                <button class="btn btn-chip chip-active" id="dc-today" onclick="setDayCard('today')">วันนี้</button>
+                <button class="btn btn-chip" id="dc-yesterday" onclick="setDayCard('yesterday')">เมื่อวาน</button>
+                <input type="date" class="date-input date-mini" id="dcDate" onchange="if(this.value)setDayCard(this.value)" title="เลือกวันที่">
+              </span>
+              <small id="todayUpdated"></small></div>
             <div class="today-metrics">
               <div class="today-main"><strong id="todayTotal">0.00</strong><small>ยอดรวม (บาท)</small></div>
               <div><b id="todayCount">0</b><small>สลิป</small></div>
@@ -117,7 +123,10 @@
             </div>
           </div>
           <div class="today-card month-card" id="monthCard">
-            <div class="today-head"><span>🗓️ เดือนนี้ <small id="monthLabel"></small></span></div>
+            <div class="today-head"><span>🗓️ เดือน <small id="monthLabel"></small></span>
+              <span class="card-filter">
+                <input type="month" class="date-input date-mini" id="mcMonth" onchange="if(this.value)setMonthCard(this.value)" title="เลือกเดือน">
+              </span></div>
             <div class="today-metrics">
               <div class="today-main"><strong id="monthTotal">0.00</strong><small>ยอดรวม (บาท)</small></div>
               <div><b id="monthCount">0</b><small>สลิป</small></div>
@@ -136,6 +145,10 @@
             <div class="trends-range">
               <button class="btn btn-chip" onclick="loadTrends(7)">7 วัน</button>
               <button class="btn btn-chip" onclick="loadTrends(30)">30 วัน</button>
+              <input type="date" class="date-input date-mini" id="trFrom" title="จากวันที่">
+              <span class="range-sep">ถึง</span>
+              <input type="date" class="date-input date-mini" id="trTo" title="ถึงวันที่">
+              <button class="btn btn-chip" onclick="loadTrendsRange()">กรอง</button>
             </div>
           </div>
           <div id="trendsChart" class="trends-chart"><div class="prov-empty">กำลังโหลด...</div></div>
@@ -151,6 +164,7 @@
               <button class="btn btn-chip" id="acctChart7d" onclick="loadAccountChart('7d')">7 วัน</button>
               <button class="btn btn-chip" id="acctChartMonth" onclick="loadAccountChart('month')">เดือนนี้</button>
               <button class="btn btn-chip" id="acctChartAll" onclick="loadAccountChart('all')">ทั้งหมด</button>
+              <input type="date" class="date-input date-mini" id="acctChartDate" onchange="if(this.value)loadAccountChart('date:'+this.value)" title="เลือกวันที่">
             </div>
           </div>
           <div id="acctChart" class="token-chart-box"><div class="prov-empty">กำลังโหลด...</div></div>
@@ -162,8 +176,10 @@
             <h3 class="provider-stats-title">📊 สัดส่วน โอน / ถอน / ฝาก</h3>
             <div class="trends-range">
               <button class="btn btn-chip" id="typeChartToday" onclick="setTypeChartScope('today')">วันนี้</button>
+              <button class="btn btn-chip" id="typeChartYesterday" onclick="setTypeChartScope('yesterday')">เมื่อวาน</button>
               <button class="btn btn-chip" id="typeChartMonth" onclick="setTypeChartScope('month')">เดือนนี้</button>
               <button class="btn btn-chip" id="typeChartAll" onclick="setTypeChartScope('all')">ทั้งหมด</button>
+              <input type="date" class="date-input date-mini" id="tcDate" onchange="if(this.value)setTypeChartScope('date:'+this.value)" title="เลือกวันที่">
             </div>
           </div>
           <div id="typeChart" class="token-chart-box"><div class="prov-empty">กำลังโหลด...</div></div>
@@ -459,14 +475,19 @@
           <label class="gm-sel">บัญชี<select id="gmAccount" onchange="renderGroupMatch()">
             <option value="">ทุกบัญชี</option>
           </select></label>
+          <label class="gm-sel">อิโมจิ<select id="gmEmoji" onchange="renderGroupMatch()">
+            <option value="">ทั้งหมด</option>
+          </select></label>
           <div class="gm-viewtoggle" role="group" aria-label="มุมมอง">
             <button class="btn btn-chip chip-active" id="gmv-day" onclick="gmSetView('day')">📅 รายวัน</button>
             <button class="btn btn-chip" id="gmv-account" onclick="gmSetView('account')">👤 รายบัญชี</button>
+            <button class="btn btn-chip" id="gmv-ann" onclick="gmSetView('ann')">📃 ประกาศ</button>
           </div>
         </div>
 
-        <!-- การ์ดสรุป -->
+        <!-- การ์ดสรุป + แถบอิโมจิ -->
         <div id="gmStats" class="gm-stats"></div>
+        <div id="gmEmojiBar" class="gm-emoji-bar"></div>
 
         <!-- กราฟรายวัน: ประกาศ vs โอนจริง -->
         <div class="info-card gm-chart-card" id="gmChartCard" style="display:none;">
@@ -739,6 +760,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=55"></script>
+  <script src="/app.js?v=56"></script>
 </body>
 </html>
