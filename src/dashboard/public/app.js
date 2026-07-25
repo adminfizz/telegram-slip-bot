@@ -282,6 +282,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
       // เปิดแท็บครั้งแรก → โหลด "เดือนนี้" อัตโนมัติ ไม่ต้องกดจับคู่เอง
       if (!gmData && !gmInFlight) gmPreset('thisMonth');
     }
+    if (tabId === 'acctrecv') {
+      if (!arData && !arInFlight) arPreset('thisMonth');
+    }
   });
 });
 
@@ -896,6 +899,249 @@ function renderGroupMatch() {
 
 function exportGroupXlsx() {
   window.open('/api/groupmatch/export-xlsx?' + gmParams().toString(), '_blank');
+}
+
+// === 🏆 อันดับบัญชีรับเงิน (acctrecv) ===
+let arData = null;
+let arInFlight = false;
+let arShowCount = 10;                 // แสดงกี่อันดับ (ดูเพิ่มเติม +10)
+let arOpen = null;                    // last4 ของบัญชีที่กางรายการอยู่
+let arItemsState = null;              // { last4, items, offset, hasMore, total, loading }
+const AR_PRESETS = ['today', 'yesterday', '7d', '30d', 'thisMonth', 'lastMonth', 'all'];
+
+function arSetChip(kind) {
+  AR_PRESETS.forEach(k => {
+    const el = document.getElementById('arp-' + k);
+    if (el) el.classList.toggle('chip-active', kind === k);
+  });
+}
+
+function arPreset(kind) {
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = new Date();
+  let from = new Date(today), to = new Date(today);
+  if (kind === 'yesterday') { from.setDate(today.getDate() - 1); to.setDate(today.getDate() - 1); }
+  else if (kind === '7d') from.setDate(today.getDate() - 6);
+  else if (kind === '30d') from.setDate(today.getDate() - 29);
+  else if (kind === 'thisMonth') from = new Date(today.getFullYear(), today.getMonth(), 1);
+  else if (kind === 'lastMonth') {
+    from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    to = new Date(today.getFullYear(), today.getMonth(), 0);
+  }
+  const dEl = document.getElementById('arDay'); if (dEl) dEl.value = '';
+  const fEl = document.getElementById('arFrom'), tEl = document.getElementById('arTo');
+  if (kind === 'all') { if (fEl) fEl.value = ''; if (tEl) tEl.value = ''; }
+  else { if (fEl) fEl.value = fmt(from); if (tEl) tEl.value = fmt(to); }
+  arSetChip(kind);
+  loadAcctRecv();
+}
+
+function arPickDay() {
+  const v = document.getElementById('arDay')?.value || '';
+  if (!v) return;
+  ['arFrom', 'arTo'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  arSetChip(null);
+  loadAcctRecv();
+}
+
+function arApplyRange() {
+  const dEl = document.getElementById('arDay'); if (dEl) dEl.value = '';
+  arSetChip(null);
+  loadAcctRecv();
+}
+
+function arApplyTime() { loadAcctRecv(); }
+function arClearTime() {
+  ['arTimeFrom', 'arTimeTo'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  loadAcctRecv();
+}
+
+function arParams() {
+  const day = document.getElementById('arDay')?.value || '';
+  const from = document.getElementById('arFrom')?.value || '';
+  const to = document.getElementById('arTo')?.value || '';
+  let p;
+  if (day) p = new URLSearchParams({ scope: 'day', date: day });
+  else if (from || to) p = new URLSearchParams({ scope: 'range', from: from || to, to: to || from });
+  else p = new URLSearchParams({ scope: 'all' });
+  const tf = document.getElementById('arTimeFrom')?.value || '';
+  const tt = document.getElementById('arTimeTo')?.value || '';
+  if (tf) p.set('timeFrom', tf.slice(0, 5));
+  if (tt) p.set('timeTo', tt.slice(0, 5));
+  return p;
+}
+
+async function loadAcctRecv(force = false) {
+  const box = document.getElementById('arBoard');
+  if (!box || arInFlight) return;
+  arInFlight = true;
+  arShowCount = 10; arOpen = null; arItemsState = null;
+  box.innerHTML = '<div class="report-loading">⏳ กำลังรวมยอดต่อบัญชี...</div>';
+  try {
+    const res = await fetch('/api/acctrecv?' + arParams().toString(), { cache: 'no-store' });
+    const d = await res.json();
+    if (!d.ok) { box.innerHTML = `<div class="info-card"><div style="color:var(--red);text-align:center;">${escHtml(d.error || 'โหลดไม่สำเร็จ')}</div></div>`; arData = null; return; }
+    arData = d;
+    const clearBtn = document.getElementById('arTimeClear');
+    if (clearBtn) clearBtn.hidden = !(d.scope && (d.scope.timeFrom || d.scope.timeTo));
+    setText('arUpdatedAt', `อัปเดต ${d.fetchedAt ? new Date(d.fetchedAt).toLocaleString('th-TH') : ''}`);
+    renderAcctRecv();
+  } catch (_) { arData = null; box.innerHTML = '<div class="info-card"><div style="color:var(--red);text-align:center;">โหลดไม่สำเร็จ</div></div>'; }
+  finally { arInFlight = false; }
+}
+
+function arFiltered() {
+  if (!arData) return [];
+  const q = (document.getElementById('arSearch')?.value || '').trim().toLowerCase();
+  let arr = arData.accounts || [];
+  if (q) {
+    const qd = q.replace(/\D/g, '');
+    arr = arr.filter(a =>
+      (a.name && a.name.toLowerCase().includes(q)) ||
+      (qd && a.last4.includes(qd)));
+  }
+  return arr;
+}
+
+function renderAcctRecv() {
+  const box = document.getElementById('arBoard');
+  const strip = document.getElementById('arStrip');
+  const moreBtn = document.getElementById('arMore');
+  if (!box || !arData) return;
+  const st = arData.summary || {};
+  const sc = arData.scope || {};
+
+  // แถบสรุป: ป้ายช่วง + ตัวเลขหลัก
+  let scopeLabel = 'ทั้งหมด';
+  if (sc.mode === 'day') scopeLabel = gmThaiDate(sc.from);
+  else if (sc.from && sc.to) scopeLabel = sc.from === sc.to ? gmThaiDate(sc.from) : `${gmThaiDate(sc.from)} – ${gmThaiDate(sc.to)}`;
+  if (sc.timeFrom || sc.timeTo) scopeLabel += ` · เวลา ${sc.timeFrom || '00:00'}–${sc.timeTo || '23:59'}`;
+  if (strip) strip.innerHTML = `
+    <span class="ar-scope">${escHtml(scopeLabel)}</span>
+    <span class="ar-kv"><b>${fmtMoney(st.grandTotal)}</b><small>ยอดรับรวม (บาท)</small></span>
+    <span class="ar-kv"><b>${fmtNum(st.accountCount)}</b><small>บัญชี</small></span>
+    <span class="ar-kv"><b>${fmtNum(st.itemCount)}</b><small>รายการโอน</small></span>
+    <span class="ar-kv"><b>${fmtMoney(st.avgPerAccount)}</b><small>เฉลี่ย/บัญชี</small></span>`;
+
+  const arr = arFiltered();
+  const q = (document.getElementById('arSearch')?.value || '').trim();
+  if (arr.length === 0) {
+    box.innerHTML = `<div class="info-card empty-state">${q ? 'ไม่พบบัญชีที่ตรงกับ "' + escHtml(q) + '"' : 'ไม่มีรายการโอนในช่วงนี้ — ลองขยายช่วงวันที่ดูนะคะ'}</div>`;
+    if (moreBtn) moreBtn.hidden = true;
+    return;
+  }
+  const top = arr.slice(0, arShowCount);
+  const maxTotal = arr[0] ? arr[0].total : 0;
+  box.innerHTML = top.map(a => arRow(a, maxTotal)).join('');
+  if (moreBtn) {
+    moreBtn.hidden = arr.length <= arShowCount;
+    moreBtn.textContent = `ดูเพิ่มเติม ↓ (เหลืออีก ${fmtNum(arr.length - arShowCount)} บัญชี)`;
+  }
+  // ถ้ามีบัญชีที่กางค้างไว้ ให้กางต่อ (เช่นหลังกด "ดูเพิ่มเติม")
+  if (arOpen && top.some(a => a.last4 === arOpen)) arMountDetail(arOpen);
+  else { arOpen = null; arItemsState = null; }
+}
+
+function arRow(a, maxTotal) {
+  const pct = maxTotal > 0 ? Math.max(2, Math.round((a.total / maxTotal) * 100)) : 0;
+  const medal = a.rank === 1 ? 'ar-gold' : a.rank === 2 ? 'ar-silver' : a.rank === 3 ? 'ar-bronze' : '';
+  const rankTxt = a.rank <= 3 ? ['🥇', '🥈', '🥉'][a.rank - 1] : a.rank;
+  const open = arOpen === a.last4;
+  return `<div class="ar-row ${medal} ${open ? 'ar-open' : ''}" id="ar-row-${escHtml(a.last4)}">
+    <button class="ar-main" onclick="arToggle('${escHtml(a.last4)}')" aria-expanded="${open}">
+      <span class="ar-rank">${rankTxt}</span>
+      <span class="ar-who">
+        <span class="ar-name">${escHtml(a.name || 'ไม่ทราบชื่อ')}</span>
+        <span class="ar-acct">****${escHtml(a.last4)}${a.bank ? ' · ' + escHtml(a.bank) : ''}</span>
+      </span>
+      <span class="ar-nums">
+        <b class="ar-total">${fmtMoney(a.total)}</b>
+        <small>${fmtNum(a.count)} รายการ · ${a.share}%</small>
+      </span>
+      <span class="ar-caret">${open ? '▾' : '▸'}</span>
+      <span class="ar-track"><span class="ar-fill" style="width:${pct}%"></span></span>
+    </button>
+    <div class="ar-detail" id="ar-detail-${escHtml(a.last4)}" ${open ? '' : 'hidden'}></div>
+  </div>`;
+}
+
+function arShowMore() {
+  arShowCount += 10;
+  renderAcctRecv();
+}
+
+function arToggle(last4) {
+  if (arOpen === last4) {
+    arOpen = null; arItemsState = null;
+    renderAcctRecv();
+    return;
+  }
+  arOpen = last4;
+  renderAcctRecv();
+}
+
+// กางรายละเอียด: โหลดรายการทีละ 10 + เลื่อนถึงท้ายโหลดต่อ (IntersectionObserver)
+let arObserver = null;
+function arMountDetail(last4) {
+  const el = document.getElementById('ar-detail-' + last4);
+  if (!el) return;
+  if (!arItemsState || arItemsState.last4 !== last4) {
+    arItemsState = { last4, items: [], offset: 0, hasMore: true, total: 0, loading: false };
+    el.innerHTML = '<div class="ar-loading">⏳ กำลังโหลดรายการ...</div>';
+    arLoadItems(last4);
+  } else {
+    arRenderDetail();
+  }
+}
+
+async function arLoadItems(last4) {
+  if (!arItemsState || arItemsState.last4 !== last4 || arItemsState.loading || !arItemsState.hasMore) return;
+  arItemsState.loading = true;
+  try {
+    const p = arParams();
+    p.set('last4', last4); p.set('offset', String(arItemsState.offset)); p.set('limit', '10');
+    const res = await fetch('/api/acctrecv/items?' + p.toString(), { cache: 'no-store' });
+    const d = await res.json();
+    if (!d.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+    if (!arItemsState || arItemsState.last4 !== last4) return; // ผู้ใช้สลับบัญชีระหว่างโหลด
+    arItemsState.items.push(...(d.items || []));
+    arItemsState.offset += (d.items || []).length;
+    arItemsState.hasMore = !!d.hasMore;
+    arItemsState.total = d.total || arItemsState.items.length;
+  } catch (_) {
+    if (arItemsState && arItemsState.last4 === last4) arItemsState.hasMore = false;
+  } finally {
+    if (arItemsState && arItemsState.last4 === last4) { arItemsState.loading = false; arRenderDetail(); }
+  }
+}
+
+function arRenderDetail() {
+  if (!arItemsState) return;
+  const el = document.getElementById('ar-detail-' + arItemsState.last4);
+  if (!el) return;
+  const s = arItemsState;
+  if (s.items.length === 0 && !s.hasMore) {
+    el.innerHTML = '<div class="ar-loading">ไม่มีรายการในช่วงนี้</div>';
+    return;
+  }
+  const rows = s.items.map((it, i) => `<div class="ar-item" style="animation-delay:${Math.min((i % 10) * 30, 270)}ms">
+    <span class="ar-item-when">${escHtml(gmThaiDate(it.day))}${it.time ? ' · ' + escHtml(it.time) + ' น.' : ''}</span>
+    <span class="ar-item-from">จาก ****${escHtml(it.from || '-')}</span>
+    <b class="ar-item-amt">+${fmtMoney(it.amount)}</b>
+  </div>`).join('');
+  el.innerHTML = `
+    <div class="ar-detail-head">แสดง ${fmtNum(s.items.length)} / ${fmtNum(s.total)} รายการ</div>
+    <div class="ar-items">${rows}</div>
+    ${s.hasMore ? '<div class="ar-sentinel" id="ar-sentinel">' + (s.loading ? '⏳ กำลังโหลดเพิ่ม...' : 'เลื่อนเพื่อโหลดเพิ่ม ↓') + '</div>' : '<div class="ar-end">— ครบทุกรายการแล้ว —</div>'}`;
+  // เลื่อนถึง sentinel → โหลดก้อนถัดไปอัตโนมัติ
+  if (arObserver) { arObserver.disconnect(); arObserver = null; }
+  const sen = document.getElementById('ar-sentinel');
+  if (sen && s.hasMore) {
+    arObserver = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) arLoadItems(s.last4);
+    }, { rootMargin: '120px' });
+    arObserver.observe(sen);
+  }
 }
 
 // รีเช็ครายวัน (รูปที่ส่ง vs บันทึก) — แสดงในแท็บ Log

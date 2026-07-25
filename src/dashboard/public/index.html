@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slip Bot — Dashboard</title>
-  <link rel="icon" href="/favicon.svg?v=57" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=58" type="image/svg+xml">
   <meta name="theme-color" content="#0a0f1e">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=57">
+  <link rel="stylesheet" href="/style.css?v=58">
 </head>
 <body>
   <!-- Loading screen -->
@@ -73,6 +73,9 @@
         </a>
         <a href="#" class="nav-item" data-tab="groupmatch">
           <span class="nav-icon">🧾</span> จับคู่ประกาศกลุ่ม
+        </a>
+        <a href="#" class="nav-item" data-tab="acctrecv">
+          <span class="nav-icon">🏆</span> อันดับบัญชีรับ
         </a>
         <a href="#" class="nav-item" data-tab="settings">
           <span class="nav-icon">⚙️</span> ตั้งค่า
@@ -502,6 +505,60 @@
         <div id="gmContainer" class="jobs-container"><div class="info-card empty-state">กำลังโหลด...</div></div>
       </section>
 
+      <!-- Account Receive Leaderboard Tab -->
+      <section class="tab-content" id="tab-acctrecv">
+        <div class="page-header" style="justify-content: space-between; align-items: center;">
+          <div>
+            <h1>🏆 อันดับบัญชีรับเงิน</h1>
+            <p class="subtitle">แต่ละบัญชีผู้รับ รับโอนไปแล้วเท่าไหร่ · เรียงมาก → น้อย · คลิกบัญชีดูรายการทั้งหมด</p>
+            <p class="live-updated" id="arUpdatedAt"></p>
+          </div>
+          <div class="jobs-actions">
+            <button class="btn btn-secondary" onclick="loadAcctRecv(true)">🔄 โหลดใหม่</button>
+          </div>
+        </div>
+
+        <!-- ตัวกรอง: ช่วงเร็ว + วันเดียว + ช่วงวันที่ + ช่วงเวลา + ค้นหา -->
+        <div class="gm-controls">
+          <button class="btn btn-chip" id="arp-today" onclick="arPreset('today')">วันนี้</button>
+          <button class="btn btn-chip" id="arp-yesterday" onclick="arPreset('yesterday')">เมื่อวาน</button>
+          <button class="btn btn-chip" id="arp-7d" onclick="arPreset('7d')">7 วัน</button>
+          <button class="btn btn-chip" id="arp-30d" onclick="arPreset('30d')">30 วัน</button>
+          <button class="btn btn-chip chip-active" id="arp-thisMonth" onclick="arPreset('thisMonth')">เดือนนี้</button>
+          <button class="btn btn-chip" id="arp-lastMonth" onclick="arPreset('lastMonth')">เดือนก่อน</button>
+          <button class="btn btn-chip" id="arp-all" onclick="arPreset('all')">ทั้งหมด</button>
+          <div class="date-range" title="ดูวันเดียว — เลือกแล้วโหลดทันที">
+            <span class="range-sep">วัน</span>
+            <input type="date" id="arDay" class="date-input" aria-label="เลือกดูวันเดียว" onchange="arPickDay()">
+          </div>
+          <div class="date-range" title="ดูช่วงวันที่">
+            <span class="range-sep">ช่วง</span>
+            <input type="date" id="arFrom" class="date-input" aria-label="จากวันที่">
+            <span class="range-sep">ถึง</span>
+            <input type="date" id="arTo" class="date-input" aria-label="ถึงวันที่">
+            <button class="btn btn-primary" onclick="arApplyRange()">🔍 กรอง</button>
+          </div>
+          <div class="date-range" title="กรองช่วงเวลาในวัน (เช่น 09:00–12:00)">
+            <span class="range-sep">เวลา</span>
+            <input type="time" id="arTimeFrom" class="date-input" aria-label="ตั้งแต่เวลา">
+            <span class="range-sep">–</span>
+            <input type="time" id="arTimeTo" class="date-input" aria-label="ถึงเวลา">
+            <button class="btn btn-secondary" onclick="arApplyTime()">ใช้เวลา</button>
+            <button class="btn btn-secondary" id="arTimeClear" onclick="arClearTime()" hidden>✕</button>
+          </div>
+          <div class="ar-search">
+            <input type="search" id="arSearch" class="date-input" placeholder="🔎 ค้นหาชื่อ / เลขบัญชี" aria-label="ค้นหาชื่อหรือเลขบัญชี" oninput="renderAcctRecv()">
+          </div>
+        </div>
+
+        <!-- แถบสรุปรวม -->
+        <div id="arStrip" class="ar-strip"></div>
+
+        <!-- Leaderboard -->
+        <div id="arBoard" class="ar-board"><div class="info-card empty-state">กำลังโหลด...</div></div>
+        <div class="ar-more-wrap"><button class="btn btn-secondary ar-more" id="arMore" onclick="arShowMore()" hidden>ดูเพิ่มเติม ↓</button></div>
+      </section>
+
       <!-- Settings Tab -->
       <section class="tab-content" id="tab-settings">
         <div class="page-header">
@@ -760,6 +817,6 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/app.js?v=57"></script>
+  <script src="/app.js?v=58"></script>
 </body>
 </html>

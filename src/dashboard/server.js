@@ -1804,6 +1804,148 @@ pin.focus();
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
+  // ── อันดับบัญชีรับเงิน — รวมยอดโอนจริง (สลิปโอนที่มีผู้รับ) ต่อบัญชีผู้รับ เรียงมาก→น้อย ──
+  // scope: all | day(&date) | range(&from&to) | month(&month) ; ออปชัน timeFrom/timeTo (HH:MM) กรองช่วงเวลา
+  // cache 60s ต่อชุดพารามิเตอร์ → /items เลื่อนโหลดทีละหน้า ไม่ต้องยิง Sheets ซ้ำทุกก้อน
+  let acctRecvCache = null; // { key, at, data }
+  const ACCTRECV_CACHE_MS = 60 * 1000;
+  async function computeAcctRecv(query) {
+    const scope = String(query.scope || 'all');
+    const date = String(query.date || '').slice(0, 10);
+    const from = String(query.from || '').slice(0, 10);
+    const to = String(query.to || '').slice(0, 10);
+    const month = String(query.month || '').slice(0, 7);
+    const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+    const isMonth = (s) => /^\d{4}-(0[1-9]|1[0-2])$/.test(s);
+    const isTime = (s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+    let lo = null, hi = null;
+    if (scope === 'day') {
+      if (!isDay(date)) throw new Error('date ต้องเป็น YYYY-MM-DD');
+      lo = date; hi = date;
+    } else if (scope === 'range') {
+      if (!isDay(from) || !isDay(to)) throw new Error('from/to ต้องเป็น YYYY-MM-DD');
+      lo = from; hi = to;
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+    } else if (scope === 'month') {
+      if (!isMonth(month)) throw new Error('month ต้องเป็น YYYY-MM (01-12)');
+      lo = `${month}-01`; hi = `${month}-31`;
+    } else if (scope !== 'all') {
+      throw new Error('scope ไม่ถูกต้อง (all|day|range|month)');
+    }
+    const timeFrom = isTime(String(query.timeFrom || '')) ? String(query.timeFrom) : null;
+    const timeTo = isTime(String(query.timeTo || '')) ? String(query.timeTo) : null;
+
+    const cacheKey = [lo || '', hi || '', timeFrom || '', timeTo || ''].join('|');
+    const nowMs = Date.now();
+    if (acctRecvCache && acctRecvCache.key === cacheKey && nowMs - acctRecvCache.at < ACCTRECV_CACHE_MS) {
+      return acctRecvCache.data;
+    }
+
+    const normAcc = (v) => { const d = String(v == null ? '' : v).replace(/\D/g, ''); return d ? d.slice(-4).padStart(4, '0') : ''; };
+    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const ctx = await ensureGoogleContext();
+    const { listTransactions } = require('../sheets');
+    const { normBank } = require('../group-scanner/parser');
+    const slipRaw = await listTransactions(ctx.authClient, ctx.spreadsheetId, { limit: 20000 });
+
+    const inRange = (d) => { if (lo && d < lo) return false; if (hi && d > hi) return false; return true; };
+    const inTime = (t) => {
+      if (!timeFrom && !timeTo) return true;
+      if (!t) return false; // มีตัวกรองเวลาแต่รายการไม่มีเวลา = ไม่เข้า
+      if (timeFrom && t < timeFrom) return false;
+      if (timeTo && t > timeTo) return false;
+      return true;
+    };
+    // เฉพาะสลิปโอนที่มีบัญชีผู้รับ (ถอน ATM ไม่มีผู้รับ ไม่นับ)
+    const items = [];
+    slipRaw.forEach(s => {
+      const rec = normAcc(s.recipient_last4);
+      if (!rec) return;
+      const m = String(s.date || '').match(/^(\d{4}-\d{2}-\d{2})[ T]?(\d{2}:\d{2})?/);
+      const day = m ? m[1] : String(s.date || '').slice(0, 10);
+      const time = m && m[2] ? m[2] : '';
+      if (!day || !inRange(day) || !inTime(time)) return;
+      items.push({
+        day, time, amount: round2(s.amount), recipient: rec,
+        from: normAcc(s.last4), bank: normBank(s.bank) || s.bank || '',
+        name: s.counterparty && s.counterparty !== '-' ? String(s.counterparty) : '',
+      });
+    });
+    items.sort((a, b) => (b.day + b.time).localeCompare(a.day + a.time)); // ใหม่ → เก่า
+
+    // ชื่อสำรองจากประกาศกลุ่ม (สลิปบางใบ OCR ชื่อไม่ได้)
+    const groupName = new Map();
+    try {
+      const { getGroupRecords } = require('../group-scanner/sheets-group');
+      const gAll = await getGroupRecords(ctx.authClient, ctx.spreadsheetId, { from: lo, to: hi });
+      gAll.forEach(g => { const k = normAcc(g.last4); if (k && g.name && !groupName.has(k)) groupName.set(k, g.name); });
+    } catch (_) { /* ไม่มีข้อมูลกลุ่มก็ไม่เป็นไร — ใช้ชื่อจากสลิปอย่างเดียว */ }
+
+    const byAcc = new Map();
+    items.forEach(it => {
+      let a = byAcc.get(it.recipient);
+      if (!a) { a = { last4: it.recipient, total: 0, count: 0, bank: '', names: new Map(), first: it.day, last: it.day, items: [] }; byAcc.set(it.recipient, a); }
+      a.total = round2(a.total + it.amount); a.count++;
+      if (it.bank && !a.bank) a.bank = it.bank;
+      if (it.name) a.names.set(it.name, (a.names.get(it.name) || 0) + 1);
+      if (it.day < a.first) a.first = it.day;
+      if (it.day > a.last) a.last = it.day;
+      a.items.push(it); // เรียงใหม่→เก่าตาม items ที่ sort แล้ว
+    });
+    const grandTotal = round2(items.reduce((t, x) => t + x.amount, 0));
+    const accounts = [...byAcc.values()].map(a => {
+      let name = '', best = 0;
+      a.names.forEach((c, n) => { if (c > best) { best = c; name = n; } });
+      if (!name) name = groupName.get(a.last4) || '';
+      return {
+        last4: a.last4, name, bank: a.bank, total: a.total, count: a.count,
+        first: a.first, last: a.last,
+        share: grandTotal > 0 ? Math.round((a.total / grandTotal) * 1000) / 10 : 0, // %
+      };
+    }).sort((a, b) => (b.total - a.total) || (b.count - a.count) || a.last4.localeCompare(b.last4));
+    accounts.forEach((a, i) => { a.rank = i + 1; });
+
+    const data = {
+      scope: { mode: scope, from: lo, to: hi, timeFrom, timeTo },
+      summary: {
+        accountCount: accounts.length,
+        itemCount: items.length,
+        grandTotal,
+        avgPerAccount: accounts.length ? round2(grandTotal / accounts.length) : 0,
+        topTotal: accounts[0] ? accounts[0].total : 0,
+      },
+      accounts,
+      _byAcc: byAcc, // ภายใน — ให้ /items หยิบก้อนไปเสิร์ฟ ไม่ส่งลง JSON
+      fetchedAt: new Date().toISOString(),
+    };
+    acctRecvCache = { key: cacheKey, at: nowMs, data };
+    return data;
+  }
+
+  app.get('/api/acctrecv', async (req, res) => {
+    try {
+      const d = await computeAcctRecv(req.query);
+      const { _byAcc, ...pub } = d;
+      res.json({ ok: true, ...pub });
+    } catch (e) { res.json({ ok: false, error: e.message || 'โหลดไม่สำเร็จ' }); }
+  });
+
+  // รายการโอนของบัญชีเดียว — เลื่อนโหลดทีละหน้า (offset/limit)
+  app.get('/api/acctrecv/items', async (req, res) => {
+    try {
+      const d = await computeAcctRecv(req.query);
+      const normAcc = (v) => { const x = String(v == null ? '' : v).replace(/\D/g, ''); return x ? x.slice(-4).padStart(4, '0') : ''; };
+      const last4 = normAcc(req.query.last4);
+      if (!last4) throw new Error('ต้องระบุ last4');
+      const acc = d._byAcc.get(last4);
+      const offset = Math.max(0, parseInt(req.query.offset || '0', 10) || 0);
+      const limit = Math.max(1, Math.min(parseInt(req.query.limit || '10', 10) || 10, 100));
+      const all = acc ? acc.items : [];
+      const page = all.slice(offset, offset + limit).map(it => ({ day: it.day, time: it.time, amount: it.amount, from: it.from, bank: it.bank, name: it.name }));
+      res.json({ ok: true, last4, total: all.length, offset, limit, items: page, hasMore: offset + page.length < all.length });
+    } catch (e) { res.json({ ok: false, error: e.message || 'โหลดไม่สำเร็จ' }); }
+  });
+
   // ── เทียบยอดกับธนาคารจริง (debittrans API) — ดึง "รายการธนาคาร" มาจับคู่รายรายการกับสลิปที่บันทึก ──
   // เป็นคนละเรื่องกับ /api/reconcile (อันนั้นเทียบ "รูปที่ส่ง vs ที่ OCR บันทึก")
   // scope: all | day(&date=YYYY-MM-DD) | range(&from=&to=) | month(&month=YYYY-MM) ; ออปชัน &last4=
