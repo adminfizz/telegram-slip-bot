@@ -1124,11 +1124,14 @@ function arRenderDetail() {
     el.innerHTML = '<div class="ar-loading">ไม่มีรายการในช่วงนี้</div>';
     return;
   }
-  const rows = s.items.map((it, i) => `<div class="ar-item" style="animation-delay:${Math.min((i % 10) * 30, 270)}ms">
+  // animate เฉพาะรายการก้อนใหม่ — รายการเดิมโชว์ทันที (กันวูบตอนเลื่อนโหลดเพิ่ม)
+  const prev = s.rendered || 0;
+  const rows = s.items.map((it, i) => `<div class="ar-item${i < prev ? ' ar-static' : ''}"${i >= prev ? ` style="animation-delay:${Math.min((i - prev) * 30, 270)}ms"` : ''}>
     <span class="ar-item-when">${escHtml(gmThaiDate(it.day))}${it.time ? ' · ' + escHtml(it.time) + ' น.' : ''}</span>
     <span class="ar-item-from">จาก ****${escHtml(it.from || '-')}</span>
     <b class="ar-item-amt">+${fmtMoney(it.amount)}</b>
   </div>`).join('');
+  s.rendered = s.items.length;
   el.innerHTML = `
     <div class="ar-detail-head">แสดง ${fmtNum(s.items.length)} / ${fmtNum(s.total)} รายการ</div>
     <div class="ar-items">${rows}</div>

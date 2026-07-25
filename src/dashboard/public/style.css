@@ -2212,3 +2212,4 @@ body::before {
   .ar-search input { min-width: 0; width: 100%; }
   .ar-search { width: 100%; }
 }
+.ar-item.ar-static { animation: none; }
