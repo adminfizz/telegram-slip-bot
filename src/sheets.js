@@ -17,8 +17,11 @@ class RateBucket {
   }
 }
 // เผื่อ margin มาก เพราะบอท + แดชบอร์ด (คนละโปรเซส) ใช้ quota ก้อนเดียวกัน (60/นาที/user)
-const READ_BUCKET = new RateBucket(40, 60000);
-const WRITE_BUCKET = new RateBucket(45, 60000);
+const IS_SERVERLESS = !!process.env.VERCEL;
+const SHEETS_READ_PER_MIN = Number(process.env.SHEETS_READ_PER_MIN) || (IS_SERVERLESS ? 15 : 25);
+const SHEETS_WRITE_PER_MIN = Number(process.env.SHEETS_WRITE_PER_MIN) || (IS_SERVERLESS ? 12 : 30);
+const READ_BUCKET = new RateBucket(SHEETS_READ_PER_MIN, 60000);
+const WRITE_BUCKET = new RateBucket(SHEETS_WRITE_PER_MIN, 60000);
 
 // usage ปัจจุบันของ rate limiter (ในโปรเซสนี้) — ไว้โชว์ quota meter บนแดชบอร์ด
 function getQuotaUsage() {
@@ -83,6 +86,8 @@ const REVIEW_TAB_NAME = '_review';
 const CONFIG_TAB_NAME = '_config';
 const AUDIT_TAB_NAME = '_audit';
 const RECONCILE_TAB_NAME = '_reconcile';
+const STATS_TAB_NAME = '_stats';
+const statsTabReady = new Set();
 const reconcileTabReady = new Set();
 const auditTabReady = new Set();
 const configTabReady = new Set();
@@ -104,7 +109,7 @@ function isAccountTab(tabName) {
 
 function isSystemTab(tabName) {
   const t = String(tabName || '');
-  return t === SYSTEM_TAB_NAME || t === JOBS_TAB_NAME || t === REVIEW_TAB_NAME || t === CONFIG_TAB_NAME || t === AUDIT_TAB_NAME || t === RECONCILE_TAB_NAME;
+  return t === SYSTEM_TAB_NAME || t === JOBS_TAB_NAME || t === REVIEW_TAB_NAME || t === CONFIG_TAB_NAME || t === AUDIT_TAB_NAME || t === RECONCILE_TAB_NAME || t === STATS_TAB_NAME;
 }
 
 function getAccountTabNamesFromMeta(meta) {
@@ -381,55 +386,171 @@ async function getJobsSnapshot(auth, spreadsheetId) {
 
 // ─── Review queue (คิวรอตรวจ — เก็บเป็น JSON array ก้อนเดียวใน _review!A1) ──────────
 // สลิปที่ใช้ "ตัวสำรอง" จับได้ หรือจับไม่ครบ → เข้าคิวนี้ ให้คนยืนยัน/แก้บนเว็บก่อนบันทึก
+const _reviewSheetId = new Map();
 async function ensureReviewTab(sheets, spreadsheetId) {
-  if (reviewTabReady.has(spreadsheetId)) return;
+  if (reviewTabReady.has(spreadsheetId) && _reviewSheetId.has(spreadsheetId)) return _reviewSheetId.get(spreadsheetId);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const existing = meta.data.sheets.find(s => s.properties.title === REVIEW_TAB_NAME);
+  let sheetId;
   if (!existing) {
-    await sheets.spreadsheets.batchUpdate({
+    const resp = await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: { requests: [{ addSheet: { properties: { title: REVIEW_TAB_NAME, hidden: true } } }] },
     });
+    sheetId = resp.data.replies && resp.data.replies[0] && resp.data.replies[0].addSheet.properties.sheetId;
+  } else {
+    sheetId = existing.properties.sheetId;
   }
   reviewTabReady.add(spreadsheetId);
+  _reviewSheetId.set(spreadsheetId, sheetId);
+  return sheetId;
+}
+
+// ── คิวรอตรวจแบบ "แถวละ 1 รายการ" (A=id, B=JSON) ─────────────────────────────
+// เดิมเก็บทั้งคิวเป็น JSON ก้อนเดียวใน A1 (เพดานเซลล์ ~48k) พอเกินจะตัดทิ้งครึ่งเก่าเงียบๆ
+// = สลิปเงินที่รอคนยืนยันหายจริง → เปลี่ยนเป็นแถวละรายการ: ไม่มีเพดานรวม ไม่ทิ้งของ
+// เปิดอ่านครั้งแรกถ้าเจอรูปแบบเก่า (A1 เป็น JSON array) จะย้ายเป็นแถวให้อัตโนมัติ
+const REVIEW_ITEM_MAX_CHARS = 45000;    // เพดานต่อเซลล์ของ Google ~50k เผื่อ margin
+const REVIEW_OCRTEXT_MAX_CHARS = 20000; // ocrText ยาวได้ ตัดพอประมาณ (ข้อมูลเงินเก็บครบเสมอ)
+
+function shrinkReviewItem(item) {
+  if (JSON.stringify(item).length <= REVIEW_ITEM_MAX_CHARS) return item;
+  const copy = { ...item };
+  if (copy.ocrText && String(copy.ocrText).length > REVIEW_OCRTEXT_MAX_CHARS) {
+    copy.ocrText = String(copy.ocrText).slice(0, REVIEW_OCRTEXT_MAX_CHARS) + '…[ตัด]';
+  }
+  if (JSON.stringify(copy).length > REVIEW_ITEM_MAX_CHARS) copy.ocrText = '';
+  return copy;
+}
+
+function parseReviewRows(rows) {
+  const out = [];
+  (rows || []).forEach(row => {
+    const raw = row && row[1];
+    if (!raw) return;
+    try { const it = JSON.parse(raw); if (it && it.id) out.push(it); } catch (_) {}
+  });
+  return out;
+}
+
+function isLegacyReviewBlob(rows) {
+  return rows.length >= 1 && rows[0] && String(rows[0][0] || '').trim().startsWith('[');
 }
 
 async function getReviewQueue(auth, spreadsheetId) {
   const sheets = sheetsClient(auth);
   try {
-    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${REVIEW_TAB_NAME}!A1` });
-    const raw = r.data.values && r.data.values[0] && r.data.values[0][0];
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
+    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${REVIEW_TAB_NAME}!A:B` });
+    const rows = r.data.values || [];
+    if (isLegacyReviewBlob(rows)) {
+      let legacy = [];
+      try { legacy = JSON.parse(rows[0][0]); } catch (_) { legacy = []; }
+      if (!Array.isArray(legacy)) legacy = [];
+      try {
+        await writeReviewRows(auth, spreadsheetId, legacy);
+        console.log(`[review] migrate คิวรอตรวจรูปแบบเก่า → แถวละรายการ (${legacy.length} รายการ)`);
+      } catch (e) { console.error('review migrate failed:', e.message); }
+      return legacy;
+    }
+    return parseReviewRows(rows);
   } catch (_) {
     return [];
   }
 }
 
-async function setReviewQueue(auth, spreadsheetId, items) {
+// เขียนคิวทั้งชุดเป็นแถว (ใช้ตอน migrate/ล้างคิว) — เคลียร์ก่อนแล้วเขียนใหม่
+async function writeReviewRows(auth, spreadsheetId, items) {
   const sheets = sheetsClient(auth);
   await ensureReviewTab(sheets, spreadsheetId);
-  let arr = Array.isArray(items) ? items : [];
-  let json = JSON.stringify(arr);
-  while (json.length > 48000 && arr.length > 1) { arr = arr.slice(-Math.ceil(arr.length / 2)); json = JSON.stringify(arr); }
-  await sheets.spreadsheets.values.update({
-    spreadsheetId, range: `${REVIEW_TAB_NAME}!A1`, valueInputOption: 'RAW', resource: { values: [[json]] },
-  });
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${REVIEW_TAB_NAME}!A:B` });
+  const arr = (Array.isArray(items) ? items : []).map(shrinkReviewItem);
+  if (arr.length > 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${REVIEW_TAB_NAME}!A1:B${arr.length}`, valueInputOption: 'RAW',
+      resource: { values: arr.map(it => [String(it.id || ''), JSON.stringify(it)]) },
+    });
+  }
+  return arr;
+}
+
+async function setReviewQueue(auth, spreadsheetId, items) {
+  return writeReviewRows(auth, spreadsheetId, items);
 }
 
 async function addReviewItem(auth, spreadsheetId, item) {
-  const arr = await getReviewQueue(auth, spreadsheetId);
+  const arr = await getReviewQueue(auth, spreadsheetId); // กันซ้ำ + trigger migrate รูปแบบเก่า
   if (item.fileHash && arr.some(x => x.fileHash && x.fileHash === item.fileHash)) return arr; // กันซ้ำ
-  arr.push(item);
-  await setReviewQueue(auth, spreadsheetId, arr);
+  const sheets = sheetsClient(auth);
+  await ensureReviewTab(sheets, spreadsheetId);
+  const safe = shrinkReviewItem(item);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId, range: `${REVIEW_TAB_NAME}!A:B`, valueInputOption: 'RAW',
+    resource: { values: [[String(safe.id || ''), JSON.stringify(safe)]] },
+  });
+  arr.push(safe);
   return arr;
 }
 
 async function removeReviewItem(auth, spreadsheetId, id) {
-  const arr = await getReviewQueue(auth, spreadsheetId);
-  const next = arr.filter(x => x.id !== id);
-  await setReviewQueue(auth, spreadsheetId, next);
-  return next;
+  const sheets = sheetsClient(auth);
+  const sheetId = await ensureReviewTab(sheets, spreadsheetId);
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${REVIEW_TAB_NAME}!A:B` });
+  const rows = r.data.values || [];
+  if (isLegacyReviewBlob(rows)) {
+    let legacy = [];
+    try { legacy = JSON.parse(rows[0][0]); } catch (_) {}
+    const next = (Array.isArray(legacy) ? legacy : []).filter(x => x.id !== id);
+    await writeReviewRows(auth, spreadsheetId, next);
+    return next;
+  }
+  const idx = rows.findIndex(row => String((row && row[0]) || '') === String(id));
+  if (idx >= 0 && sheetId != null) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 } } }] },
+    });
+  }
+  return parseReviewRows(rows.filter((_, i) => i !== idx));
+}
+
+// ─── Stats snapshot (ยอดสรุปคำนวณล่วงหน้าโดยบอท — ให้แดชบอร์ด/Vercel อ่าน 1 read แทน scan ทุกแท็บ) ───
+async function ensureStatsTab(sheets, spreadsheetId) {
+  if (statsTabReady.has(spreadsheetId)) return;
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  if (!meta.data.sheets.find(s => s.properties.title === STATS_TAB_NAME)) {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: STATS_TAB_NAME, hidden: true } } }] } });
+  }
+  statsTabReady.add(spreadsheetId);
+}
+
+async function setStatsSnapshot(auth, spreadsheetId, payload) {
+  const sheets = sheetsClient(auth);
+  await ensureStatsTab(sheets, spreadsheetId);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId, range: `${STATS_TAB_NAME}!A1`, valueInputOption: 'RAW',
+    resource: { values: [[JSON.stringify(payload)]] },
+  });
+}
+
+async function getStatsSnapshot(auth, spreadsheetId) {
+  const sheets = sheetsClient(auth);
+  try {
+    const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${STATS_TAB_NAME}!A1` });
+    const raw = r.data.values && r.data.values[0] && r.data.values[0][0];
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+
+// รวมยอดจาก report (ต่อบัญชี) → ก้อนสรุป {total,count,fee,transfer,withdraw,deposit}
+function sumReport(report) {
+  let total = 0, count = 0, fee = 0, transfer = 0, withdraw = 0, deposit = 0;
+  Object.entries(report || {}).forEach(([k, a]) => {
+    if (k.startsWith('_')) return;
+    total += Number(a.total || 0); fee += Number(a.feeSum || 0);
+    transfer += Number(a.transferSum || 0); withdraw += Number(a.withdrawSum || 0); deposit += Number(a.depositSum || 0);
+    count += Number(a.transferCount || 0) + Number(a.withdrawCount || 0) + Number(a.depositCount || 0) + Number(a.billCount || 0) + Number(a.otherCount || 0);
+  });
+  return { total, count, fee, transfer, withdraw, deposit };
 }
 
 // ─── OCR config (โมเดลหลัก/สำรอง — ตั้งบนเว็บ, บอทอ่านอย่างเดียว) ─────────────────
@@ -1201,19 +1322,31 @@ async function getReport(auth, spreadsheetId, targetLast4 = null, targetDate = n
 }
 
 // แนวโน้มรายวัน N วันล่าสุด: จำนวนสลิป + ยอดรวม ต่อวัน (อ่าน 1 batchGet)
-async function getTrends(auth, spreadsheetId, days = 7) {
+async function getTrends(auth, spreadsheetId, days = 7, range = null) {
   const sheets = sheetsClient(auth);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const sheetNames = getAccountTabNamesFromMeta(meta);
-  // เตรียม bucket ของ N วันล่าสุด (ตามเวลาไทย)
+  // เตรียม bucket: ช่วง from–to ที่เลือกเอง (สูงสุด 92 วัน) หรือ N วันล่าสุด (ตามเวลาไทย)
   const buckets = {};
   const order = [];
-  const today = new Date(getTodayStr() + 'T00:00:00+07:00');
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today.getTime() - i * 86400000);
-    const key = getTodayStr(d);
-    buckets[key] = { date: key, count: 0, amount: 0 };
-    order.push(key);
+  if (range && range.from && range.to) {
+    let cur = new Date(range.from + 'T00:00:00+07:00');
+    const end = new Date(range.to + 'T00:00:00+07:00');
+    let guard = 0;
+    while (cur <= end && guard++ < 92) {
+      const key = getTodayStr(cur);
+      buckets[key] = { date: key, count: 0, amount: 0 };
+      order.push(key);
+      cur = new Date(cur.getTime() + 86400000);
+    }
+  } else {
+    const today = new Date(getTodayStr() + 'T00:00:00+07:00');
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today.getTime() - i * 86400000);
+      const key = getTodayStr(d);
+      buckets[key] = { date: key, count: 0, amount: 0 };
+      order.push(key);
+    }
   }
   if (sheetNames.length === 0) return order.map(k => buckets[k]);
   let valueRanges = [];
@@ -1673,6 +1806,24 @@ async function syncSummaryTab(auth, spreadsheetId) {
       resource: { values: rows },
     });
   }
+
+  // เขียน stats snapshot ให้แดชบอร์ด (best-effort — ห้ามทำให้ summary sync ล้ม)
+  try {
+    const todayStr = getTodayStr();
+    const monthRange = `${todayStr.slice(0, 8)}01~${todayStr}`;
+    const [monthReport, trends] = await Promise.all([
+      getReport(auth, spreadsheetId, null, monthRange),
+      getTrends(auth, spreadsheetId, 92),
+    ]);
+    await setStatsSnapshot(auth, spreadsheetId, {
+      updatedAt: new Date().toISOString(),
+      todayDate: todayStr,
+      monthLabel: todayStr.slice(0, 7),
+      today: sumReport(todayReport),
+      month: sumReport(monthReport),
+      trends,
+    });
+  } catch (e) { console.error('stats snapshot failed:', e.message); }
 }
 
 // ใส่ช่อง "ยอดรวมของบัญชีนี้" (สูตร auto-update) ในแท็บบัญชี — วางที่คอลัมน์ M/N (นอกคอลัมน์ข้อมูล A:K)
@@ -1723,6 +1874,9 @@ module.exports = {
   removeReviewItem,
   getOcrConfig,
   setOcrConfig,
+  setStatsSnapshot,
+  getStatsSnapshot,
+  sumReport,
   getAuditLog,
   appendAudit,
   buildWipeSummaryText,
