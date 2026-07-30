@@ -434,7 +434,8 @@ function parseReviewRows(rows) {
 }
 
 function isLegacyReviewBlob(rows) {
-  return rows.length >= 1 && rows[0] && String(rows[0][0] || '').trim().startsWith('[');
+  // legacy จริง = แถวเดียว + A1 เป็น JSON array + ช่อง B ว่าง (รูปแบบใหม่มี JSON ใน B เสมอ)
+  return rows.length === 1 && rows[0] && String(rows[0][0] || '').trim().startsWith('[') && !rows[0][1];
 }
 
 async function getReviewQueue(auth, spreadsheetId) {
@@ -503,7 +504,12 @@ async function removeReviewItem(auth, spreadsheetId, id) {
     await writeReviewRows(auth, spreadsheetId, next);
     return next;
   }
-  const idx = rows.findIndex(row => String((row && row[0]) || '') === String(id));
+  // จับคู่ด้วยคอลัมน์ A ก่อน; ถ้า A เพี้ยน (เช่นโค้ดเก่าเคยเขียนทับ) ให้เทียบ id ใน JSON คอลัมน์ B ด้วย
+  const rowId = (row) => {
+    if (String((row && row[0]) || '') === String(id)) return true;
+    try { const it = JSON.parse((row && row[1]) || ''); return it && String(it.id) === String(id); } catch (_) { return false; }
+  };
+  const idx = rows.findIndex(rowId);
   if (idx >= 0 && sheetId != null) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
