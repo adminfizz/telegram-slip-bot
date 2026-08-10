@@ -213,8 +213,9 @@ if (require.main === module) {
       let entity = null;
       try { entity = await client.getEntity('withdraw atm'); } catch (_) {}
       if (!entity) {
+        // ชื่อกลุ่มจริงมีอิโมจิต่อท้าย ("Withdraw Atm 💳") — match แบบ includes เหมือน resolveGroup ของ scan.js
         for await (const d of client.iterDialogs({ limit: 500 })) {
-          if (String(d.title || '').trim().toLowerCase() === 'withdraw atm') { entity = d.entity; break; }
+          if (String(d.title || '').trim().toLowerCase().includes('withdraw atm')) { entity = d.entity; break; }
         }
       }
       if (!entity) { console.error('❌ หากลุ่ม withdraw atm ไม่เจอ'); process.exit(1); }
