@@ -1,5 +1,7 @@
 // announcer.js — ส่งข้อความแจ้งเตือนลงกลุ่มตามรอบวันที่ (เวลาไทย) + แท็คแอดมิน + pin แบบแจ้งเตือน
 // รอบส่ง: ก่อนวันที่ 1 สามวัน (สิ้นเดือน-2) / ก่อนวันที่ 1 หนึ่งวัน (สิ้นเดือน) / วันที่ 1 / 7 / 9 / 10
+// กติกา pin: ทุกชุดใหม่จะลบ pin ของชุดก่อนแล้ว pin ตัวเอง · วันหลัก (1, 10) pin ค้าง 24 ชม. แล้วลบอัตโนมัติ
+//            เคาท์ดาวน์ (สิ้นเดือน-2/สิ้นเดือน/7/9) pin ค้างไว้จนชุดถัดไปมาแทน
 // ข้อความ+รายชื่อแท็คตั้งใน announce.json (root repo) — แก้ไฟล์ได้เลย ไม่ต้อง restart (อ่านใหม่ทุกรอบเช็ค)
 // slot ที่ข้อความว่าง = ยังไม่ส่ง (รอเปอร์ใส่ข้อความ) — เติมระหว่างวันแล้วส่งให้ในรอบเช็คถัดไป
 //
@@ -84,18 +86,61 @@ function buildMessage(text, resolved, blankLines) {
   return { msg, entities };
 }
 
-async function sendAnnouncement(client, entity, slot, cfg) {
+async function unpinMessage(client, entity, msgId) {
+  try { await client.unpinMessage(entity, msgId); return true; }
+  catch (_) {
+    try { // fallback API ตรง เผื่อ helper ของ gramjs รุ่นที่ลงไว้ไม่มี unpinMessage
+      const { Api } = require('telegram');
+      await client.invoke(new Api.messages.UpdatePinnedMessage({ peer: entity, id: msgId, unpin: true }));
+      return true;
+    } catch (e2) {
+      console.error(`⚠️ announcer: ลบ pin เก่า (msg ${msgId}) ไม่ได้: ${(e2 && e2.message) || e2}`);
+      return false;
+    }
+  }
+}
+
+const MAIN_SLOTS = ['day1', 'day10'];        // วันหลัก — pin 24 ชม. แล้วลบ
+const MAIN_PIN_HOURS = 24;
+
+// ตัวแปรในเทมเพลต — บอทเติมวันที่จริงของเดือนนั้นให้เองทุกเดือน (พ.ศ.)
+//   {TODAY} = วันนี้ · {DUE_DATE} = วันครบกำหนดของชุดนั้น · {DUE_MONTH} = เดือนของรอบบิล
+const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+const TH_WDAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+function thaiDate(d) { return `วัน${TH_WDAYS[d.getUTCDay()]}ที่ ${d.getUTCDate()} ${TH_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear() + 543}`; }
+function dueDateFor(slot, now) {
+  const y = now.getUTCFullYear(), m = now.getUTCMonth();
+  if (slot === 'day1') return now;                                          // ชุด Premium ID ครบกำหนดวันนี้
+  if (slot === 'before3' || slot === 'before1') return new Date(Date.UTC(y, m + 1, 1)); // นับถอยหลังเข้าวันที่ 1 เดือนถัดไป
+  return slot === 'day10' ? now : new Date(Date.UTC(y, m, 10));             // ชุด Broadcast ครบกำหนดวันที่ 10 เดือนนี้
+}
+function fillVars(text, slot, now) {
+  const due = dueDateFor(slot, now);
+  return String(text)
+    .replace(/\{TODAY\}/g, thaiDate(now))
+    .replace(/\{DUE_DATE\}/g, thaiDate(due))
+    .replace(/\{DUE_MONTH\}/g, `${TH_MONTHS[due.getUTCMonth()]} ${due.getUTCFullYear() + 543}`);
+}
+
+async function sendAnnouncement(client, entity, slot, cfg, state) {
   const { Api } = require('telegram');
   const resolved = await resolveMentions(client, entity, cfg.mentions);
   resolved.filter(r => !r.user).forEach(r => console.log(`⚠️ announcer: หา "${r.label}" ในกลุ่มไม่เจอ — แท็คไม่เด้ง (ใส่ username/id ใน announce.json ช่วยได้)`));
-  const { msg, entities } = buildMessage(cfg.messages[slot], resolved, cfg.blankLines);
+  const { msg, entities } = buildMessage(fillVars(cfg.messages[slot], slot, bkkNow()), resolved, cfg.blankLines);
   const formattingEntities = entities.map(e => new Api.InputMessageEntityMentionName({
     offset: e.offset, length: e.length,
     userId: new Api.InputUser({ userId: e.userId, accessHash: resolved.find(r => r.user && r.user.id === e.userId).user.accessHash }),
   }));
   const sent = await client.sendMessage(entity, { message: msg, formattingEntities: formattingEntities.length ? formattingEntities : undefined });
+  // ชุดใหม่มา → ลบ pin ชุดก่อน (เคาท์ดาวน์ pin ค้างจนถึงตรงนี้)
+  if (state.pin && state.pin.msgId) await unpinMessage(client, entity, state.pin.msgId);
   try {
     await client.pinMessage(entity, sent.id, { notify: true }); // pin แบบเด้งแจ้งเตือนทุกคน (แทน @all ที่ Telegram ไม่มี)
+    state.pin = {
+      msgId: sent.id, slot,
+      // วันหลักลบ pin หลัง 24 ชม. · เคาท์ดาวน์ไม่มีเวลาหมด (null = รอชุดถัดไปมาแทน)
+      unpinAt: MAIN_SLOTS.includes(slot) ? new Date(Date.now() + MAIN_PIN_HOURS * 3600 * 1000).toISOString() : null,
+    };
   } catch (e) {
     console.error(`⚠️ announcer: ส่งแล้วแต่ pin ไม่ได้ (บัญชีอาจไม่มีสิทธิ์ pin): ${(e && e.message) || e}`);
   }
@@ -108,6 +153,14 @@ function start(client, entity) {
   async function tick() {
     const cfg = loadConfig();
     if (!cfg || cfg.enabled === false) return;
+    // pin วันหลักครบ 24 ชม. → ลบ pin (persist ใน state — restart แล้วยังลบตรงเวลา)
+    const st0 = loadState();
+    if (st0.pin && st0.pin.unpinAt && new Date().toISOString() >= st0.pin.unpinAt) {
+      await unpinMessage(client, entity, st0.pin.msgId);
+      console.log(`📌 announcer: ครบ ${MAIN_PIN_HOURS} ชม. — ลบ pin "${st0.pin.slot}" (msg ${st0.pin.msgId})`);
+      delete st0.pin;
+      saveState(st0);
+    }
     const now = bkkNow();
     const slot = slotForDate(now);
     if (!slot) return;
@@ -122,7 +175,7 @@ function start(client, entity) {
       if (!warnedEmpty.has(key)) { warnedEmpty.add(key); console.log(`📭 announcer: วันนี้ครบรอบ "${slot}" แต่ยังไม่ได้ตั้งข้อความใน announce.json — เติมข้อความแล้วจะส่งให้อัตโนมัติ`); }
       return;
     }
-    const sent = await sendAnnouncement(client, entity, slot, cfg);
+    const sent = await sendAnnouncement(client, entity, slot, cfg, state);
     state[key] = { sentAt: new Date().toISOString(), msgId: sent.id };
     saveState(state);
     console.log(`📣 announcer: ส่ง+pin แจ้งเตือน "${slot}" แล้ว (msg ${sent.id})`);
@@ -131,7 +184,7 @@ function start(client, entity) {
   console.log(`📅 announcer: พร้อมส่งแจ้งเตือน (สิ้นเดือน-2 / สิ้นเดือน / 1 / 7 / 9 / 10 เวลา ${((loadConfig() || {}).sendTime) || '00:01'} น.)`);
 }
 
-module.exports = { start, slotForDate, buildMessage, resolveMentions, daysInMonth, CONFIG_PATH };
+module.exports = { start, slotForDate, buildMessage, resolveMentions, daysInMonth, fillVars, sendAnnouncement, unpinMessage, CONFIG_PATH };
 
 // ── โหมดรันเดี่ยว (ทดสอบ) ──
 if (require.main === module) {
