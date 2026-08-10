@@ -187,10 +187,15 @@ function start(client, entity) {
 module.exports = { start, slotForDate, buildMessage, resolveMentions, daysInMonth, fillVars, sendAnnouncement, unpinMessage, CONFIG_PATH };
 
 // ── โหมดรันเดี่ยว (ทดสอบ) ──
+// --test <slot>: ยิงเทมเพลต slot นั้นเข้ากลุ่มจริง 1 ข้อความ (แท็คจริง, ไม่ pin, ไม่แตะ state)
+//                ใช้ดูหน้าตาจริงก่อนรอบส่งอัตโนมัติ — ลบทิ้งจากกลุ่มทีหลังได้
 if (require.main === module) {
   (async () => {
     const dry = process.argv.includes('--dry');
     const doResolve = process.argv.includes('--resolve');
+    const ti = process.argv.indexOf('--test');
+    const testSlot = ti !== -1 ? (process.argv[ti + 1] || 'before3') : null;
+    const delTest = process.argv.includes('--del-test');
     const cfg = loadConfig();
     if (!cfg) { console.error(`❌ อ่าน ${CONFIG_PATH} ไม่ได้`); process.exit(1); }
     const now = bkkNow();
@@ -204,7 +209,7 @@ if (require.main === module) {
       }
       process.exit(0);
     }
-    if (doResolve) {
+    if (doResolve || testSlot || delTest) {
       require('dotenv').config({ path: path.join(ROOT, '.env') });
       const { TelegramClient } = require('telegram');
       const { StringSession } = require('telegram/sessions');
@@ -223,6 +228,23 @@ if (require.main === module) {
       resolved.forEach(r => console.log(r.user
         ? `✓ "${r.label}" → ${[r.user.firstName, r.user.lastName].filter(Boolean).join(' ')}${r.user.username ? ' @' + r.user.username : ''} (id ${r.user.id})`
         : `✗ "${r.label}" — หาไม่เจอในกลุ่ม`));
+      if (testSlot) {
+        const { Api } = require('telegram');
+        const text = (cfg.messages && cfg.messages[testSlot]) ? String(cfg.messages[testSlot]).trim() : '';
+        if (!text) { console.error(`❌ slot "${testSlot}" ไม่มีข้อความ (มี: before3 before1 day1 day7 day9 day10)`); process.exit(1); }
+        const { msg, entities } = buildMessage(fillVars(text, testSlot, bkkNow()), resolved, cfg.blankLines);
+        const formattingEntities = entities.map(e => new Api.InputMessageEntityMentionName({
+          offset: e.offset, length: e.length,
+          userId: new Api.InputUser({ userId: e.userId, accessHash: resolved.find(r => r.user && r.user.id === e.userId).user.accessHash }),
+        }));
+        const sent = await client.sendMessage(entity, { message: msg, formattingEntities: formattingEntities.length ? formattingEntities : undefined });
+        console.log(`📨 ยิงทดสอบ "${testSlot}" เข้ากลุ่มแล้ว (msg ${sent.id}) — ไม่ pin, ไม่แตะ state · ลบ: --del-test ${sent.id}`);
+      }
+      const di = process.argv.indexOf('--del-test');
+      if (di !== -1 && process.argv[di + 1]) {
+        await client.deleteMessages(entity, [Number(process.argv[di + 1])], { revoke: true }); // revoke = ลบฝั่งทุกคน
+        console.log(`🗑️ ลบข้อความทดสอบ ${process.argv[di + 1]} ออกจากกลุ่มแล้ว`);
+      }
       process.exit(0);
     }
   })().catch(e => { console.error('❌', (e && e.message) || e); process.exit(1); });
