@@ -2,7 +2,12 @@
   "enabled": true,
   "sendTime": "00:01",
   "blankLines": 2,
-  "mentions": ["H2", "H1", "Admin 1", "Admin 2"],
+  "mentions": [
+    { "label": "H2", "id": 6135721555, "username": "H2every" },
+    { "label": "H1", "id": 6251767692 },
+    "Admin 1",
+    "Admin 2"
+  ],
   "messages": {
     "before3": "🤖 แจ้งเตือนอัตโนมัติ — Slip Bot\n━━━━━━━━━━━━━━\n💠 Premium ID · LINE Official\n\n⏳ เหลืออีก 3 วัน  [ 🟡🟡🟡 ]\n📅 ครบกำหนด: {DUE_DATE}\n\nโปรดเตรียมยอดและชำระภายในกำหนด",
     "before1": "🤖 แจ้งเตือนอัตโนมัติ — Slip Bot\n━━━━━━━━━━━━━━\n💠 Premium ID · LINE Official\n\n🔴 พรุ่งนี้ครบกำหนดชำระ\n📅 {DUE_DATE}\n\nชำระแล้วโปรดแจ้งยืนยันในกลุ่ม",
