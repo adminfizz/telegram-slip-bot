@@ -232,7 +232,9 @@ if (require.main === module) {
         const { Api } = require('telegram');
         const text = (cfg.messages && cfg.messages[testSlot]) ? String(cfg.messages[testSlot]).trim() : '';
         if (!text) { console.error(`❌ slot "${testSlot}" ไม่มีข้อความ (มี: before3 before1 day1 day7 day9 day10)`); process.exit(1); }
-        const { msg, entities } = buildMessage(fillVars(text, testSlot, bkkNow()), resolved, cfg.blankLines);
+        // แปะหัวกำกับให้คนในกลุ่มรู้ว่าเป็นการทดสอบ — เฉพาะโหมด --test (รอบส่งจริงไม่มีบรรทัดนี้)
+        const testText = '🧪 [ ข้อความทดสอบระบบแจ้งเตือน — ไม่ต้องดำเนินการใดๆ ]\n\n' + text;
+        const { msg, entities } = buildMessage(fillVars(testText, testSlot, bkkNow()), resolved, cfg.blankLines);
         const formattingEntities = entities.map(e => new Api.InputMessageEntityMentionName({
           offset: e.offset, length: e.length,
           userId: new Api.InputUser({ userId: e.userId, accessHash: resolved.find(r => r.user && r.user.id === e.userId).user.accessHash }),
