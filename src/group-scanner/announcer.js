@@ -68,6 +68,7 @@ async function resolveMentions(client, entity, mentionCfg) {
 
 // ประกอบข้อความ: เนื้อหา + เว้นบรรทัด + แถวแท็ค — mention คนไม่มี username ใช้ entity MentionName (ต้องมี offset UTF-16)
 function buildMessage(text, resolved, blankLines) {
+  if (!resolved || !resolved.length) return { msg: String(text).trim(), entities: [] }; // ไม่มีคนแท็ค = ข้อความล้วน
   const gap = '\n'.repeat(Math.max(1, Number(blankLines) || 2) + 1); // 2 บรรทัดว่าง = ขึ้นบรรทัดใหม่ 3 ครั้ง
   let msg = String(text).trim() + gap;
   const entities = [];
@@ -233,8 +234,10 @@ if (require.main === module) {
         const text = (cfg.messages && cfg.messages[testSlot]) ? String(cfg.messages[testSlot]).trim() : '';
         if (!text) { console.error(`❌ slot "${testSlot}" ไม่มีข้อความ (มี: before3 before1 day1 day7 day9 day10)`); process.exit(1); }
         // แปะหัวกำกับให้คนในกลุ่มรู้ว่าเป็นการทดสอบ — เฉพาะโหมด --test (รอบส่งจริงไม่มีบรรทัดนี้)
+        // ค่าเริ่มต้นไม่แท็คใคร (ข้อความล้วน) — อยากทดสอบแท็คด้วยใส่ --tag
         const testText = '🧪 [ ข้อความทดสอบระบบแจ้งเตือน — ไม่ต้องดำเนินการใดๆ ]\n\n' + text;
-        const { msg, entities } = buildMessage(fillVars(testText, testSlot, bkkNow()), resolved, cfg.blankLines);
+        const testMentions = process.argv.includes('--tag') ? resolved : [];
+        const { msg, entities } = buildMessage(fillVars(testText, testSlot, bkkNow()), testMentions, cfg.blankLines);
         const formattingEntities = entities.map(e => new Api.InputMessageEntityMentionName({
           offset: e.offset, length: e.length,
           userId: new Api.InputUser({ userId: e.userId, accessHash: resolved.find(r => r.user && r.user.id === e.userId).user.accessHash }),
