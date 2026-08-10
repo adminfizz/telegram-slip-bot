@@ -1,0 +1,175 @@
+// announcer.js — ส่งข้อความแจ้งเตือนลงกลุ่มตามรอบวันที่ (เวลาไทย) + แท็คแอดมิน + pin แบบแจ้งเตือน
+// รอบส่ง: ก่อนวันที่ 1 สามวัน (สิ้นเดือน-2) / ก่อนวันที่ 1 หนึ่งวัน (สิ้นเดือน) / วันที่ 1 / 7 / 9 / 10
+// ข้อความ+รายชื่อแท็คตั้งใน announce.json (root repo) — แก้ไฟล์ได้เลย ไม่ต้อง restart (อ่านใหม่ทุกรอบเช็ค)
+// slot ที่ข้อความว่าง = ยังไม่ส่ง (รอเปอร์ใส่ข้อความ) — เติมระหว่างวันแล้วส่งให้ในรอบเช็คถัดไป
+//
+// ใช้ใน process สแกนเดิม (scan.js --live เรียก start(client, entity)) — client เดียว ไม่เปิด session ซ้อน
+// ทดสอบเดี่ยว:  node src/group-scanner/announcer.js --dry            (คำนวณ slot วันนี้ + ข้อความที่จะส่ง ไม่ส่งจริง)
+//              node src/group-scanner/announcer.js --resolve        (เช็คว่าแท็คหาตัวคนในกลุ่มเจอไหม)
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..', '..');
+const CONFIG_PATH = path.join(ROOT, 'announce.json');
+const STATE_PATH = path.join(ROOT, '.announce-state.json');
+const CHECK_MS = 30 * 1000; // เช็คทุก 30 วิ — ส่งจริงเมื่อถึงเวลา + ยังไม่เคยส่งของวัน:slot นั้น
+
+// เวลาไทย (Asia/Bangkok = UTC+7 คงที่ ไม่มี DST) — ใช้ UTC getter บนเวลาที่เลื่อน +7 ชม. (แบบเดียวกับ scan.js)
+function bkkNow() { return new Date(Date.now() + 7 * 3600 * 1000); }
+function daysInMonth(y, m1to12) { return new Date(Date.UTC(y, m1to12, 0)).getUTCDate(); }
+
+// วันนี้ตรง slot ไหน (หรือ null) — สิ้นเดือน-2/สิ้นเดือน ไม่มีทางชนกับ 1/7/9/10 (สิ้นเดือน ≥ 28)
+function slotForDate(bkk) {
+  const d = bkk.getUTCDate();
+  const last = daysInMonth(bkk.getUTCFullYear(), bkk.getUTCMonth() + 1);
+  if (d === 1) return 'day1';
+  if (d === 7) return 'day7';
+  if (d === 9) return 'day9';
+  if (d === 10) return 'day10';
+  if (d === last) return 'before1';
+  if (d === last - 2) return 'before3';
+  return null;
+}
+
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); }
+  catch (_) { return null; }
+}
+function loadState() {
+  try { return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')); }
+  catch (_) { return {}; }
+}
+function saveState(st) { fs.writeFileSync(STATE_PATH, JSON.stringify(st, null, 2)); }
+
+// หาตัวคนในกลุ่มจาก label ("H2", "Admin 1", ...) หรือ config ระบุ username/id ตรงๆ
+// เทียบ (ไม่สนตัวพิมพ์): username / ชื่อที่แสดง (firstName, firstName+lastName)
+async function resolveMentions(client, entity, mentionCfg) {
+  const participants = await client.getParticipants(entity);
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const out = [];
+  for (const m of mentionCfg || []) {
+    const label = typeof m === 'string' ? m : (m.label || m.username || String(m.id || ''));
+    const wantUser = norm(typeof m === 'object' ? m.username : '');
+    const wantId = typeof m === 'object' && m.id ? String(m.id) : '';
+    const wantName = norm(label);
+    let found = null;
+    for (const p of participants) {
+      if (wantId && String(p.id) === wantId) { found = p; break; }
+      if (wantUser && norm(p.username) === wantUser) { found = p; break; }
+      const full = norm([p.firstName, p.lastName].filter(Boolean).join(' '));
+      if (!wantUser && !wantId && (norm(p.firstName) === wantName || full === wantName || norm(p.username) === wantName)) { found = p; break; }
+    }
+    out.push({ label, user: found });
+  }
+  return out;
+}
+
+// ประกอบข้อความ: เนื้อหา + เว้นบรรทัด + แถวแท็ค — mention คนไม่มี username ใช้ entity MentionName (ต้องมี offset UTF-16)
+function buildMessage(text, resolved, blankLines) {
+  const gap = '\n'.repeat(Math.max(1, Number(blankLines) || 2) + 1); // 2 บรรทัดว่าง = ขึ้นบรรทัดใหม่ 3 ครั้ง
+  let msg = String(text).trim() + gap;
+  const entities = [];
+  resolved.forEach((r, i) => {
+    if (i > 0) msg += ' ';
+    if (r.user && r.user.username) {
+      msg += '@' + r.user.username;                    // @username เด้งเองไม่ต้องมี entity
+    } else if (r.user) {
+      const offset = msg.length;                        // .length ของ JS = UTF-16 units ตรงสเปก Telegram
+      msg += r.label;
+      entities.push({ offset, length: r.label.length, userId: r.user.id });
+    } else {
+      msg += r.label;                                   // หาตัวไม่เจอ — ใส่ชื่อเฉยๆ (log เตือนแล้ว)
+    }
+  });
+  return { msg, entities };
+}
+
+async function sendAnnouncement(client, entity, slot, cfg) {
+  const { Api } = require('telegram');
+  const resolved = await resolveMentions(client, entity, cfg.mentions);
+  resolved.filter(r => !r.user).forEach(r => console.log(`⚠️ announcer: หา "${r.label}" ในกลุ่มไม่เจอ — แท็คไม่เด้ง (ใส่ username/id ใน announce.json ช่วยได้)`));
+  const { msg, entities } = buildMessage(cfg.messages[slot], resolved, cfg.blankLines);
+  const formattingEntities = entities.map(e => new Api.InputMessageEntityMentionName({
+    offset: e.offset, length: e.length,
+    userId: new Api.InputUser({ userId: e.userId, accessHash: resolved.find(r => r.user && r.user.id === e.userId).user.accessHash }),
+  }));
+  const sent = await client.sendMessage(entity, { message: msg, formattingEntities: formattingEntities.length ? formattingEntities : undefined });
+  try {
+    await client.pinMessage(entity, sent.id, { notify: true }); // pin แบบเด้งแจ้งเตือนทุกคน (แทน @all ที่ Telegram ไม่มี)
+  } catch (e) {
+    console.error(`⚠️ announcer: ส่งแล้วแต่ pin ไม่ได้ (บัญชีอาจไม่มีสิทธิ์ pin): ${(e && e.message) || e}`);
+  }
+  return sent;
+}
+
+// วนเช็ค: ถึงเวลา + วันนี้เป็นวันส่ง + ยังไม่ส่ง + มีข้อความ → ส่ง (ถ้า process ดับช่วง 00:01 กลับมาแล้วยังส่งชดเชยภายในวันเดียวกัน)
+function start(client, entity) {
+  const warnedEmpty = new Set(); // log "ข้อความว่าง" วันละครั้งต่อ slot พอ
+  async function tick() {
+    const cfg = loadConfig();
+    if (!cfg || cfg.enabled === false) return;
+    const now = bkkNow();
+    const slot = slotForDate(now);
+    if (!slot) return;
+    const timeStr = now.toISOString().slice(11, 16);
+    if (timeStr < (cfg.sendTime || '00:01')) return;
+    const dateStr = now.toISOString().slice(0, 10);
+    const key = `${dateStr}:${slot}`;
+    const state = loadState();
+    if (state[key]) return;
+    const text = (cfg.messages && cfg.messages[slot]) ? String(cfg.messages[slot]).trim() : '';
+    if (!text) {
+      if (!warnedEmpty.has(key)) { warnedEmpty.add(key); console.log(`📭 announcer: วันนี้ครบรอบ "${slot}" แต่ยังไม่ได้ตั้งข้อความใน announce.json — เติมข้อความแล้วจะส่งให้อัตโนมัติ`); }
+      return;
+    }
+    const sent = await sendAnnouncement(client, entity, slot, cfg);
+    state[key] = { sentAt: new Date().toISOString(), msgId: sent.id };
+    saveState(state);
+    console.log(`📣 announcer: ส่ง+pin แจ้งเตือน "${slot}" แล้ว (msg ${sent.id})`);
+  }
+  setInterval(() => { tick().catch(e => console.error('⚠️ announcer ล้ม:', (e && e.message) || e)); }, CHECK_MS);
+  console.log(`📅 announcer: พร้อมส่งแจ้งเตือน (สิ้นเดือน-2 / สิ้นเดือน / 1 / 7 / 9 / 10 เวลา ${((loadConfig() || {}).sendTime) || '00:01'} น.)`);
+}
+
+module.exports = { start, slotForDate, buildMessage, resolveMentions, daysInMonth, CONFIG_PATH };
+
+// ── โหมดรันเดี่ยว (ทดสอบ) ──
+if (require.main === module) {
+  (async () => {
+    const dry = process.argv.includes('--dry');
+    const doResolve = process.argv.includes('--resolve');
+    const cfg = loadConfig();
+    if (!cfg) { console.error(`❌ อ่าน ${CONFIG_PATH} ไม่ได้`); process.exit(1); }
+    const now = bkkNow();
+    const slot = slotForDate(now);
+    console.log(`วันนี้ (ไทย): ${now.toISOString().slice(0, 10)} → slot: ${slot || 'ไม่ใช่วันส่ง'}`);
+    if (dry && !doResolve) {
+      // dry ล้วน: ไม่ต่อ Telegram — โชว์ข้อความที่จะส่งของทุก slot
+      for (const [k, v] of Object.entries(cfg.messages || {})) {
+        const { msg } = buildMessage(v || '(ยังไม่ตั้งข้อความ)', (cfg.mentions || []).map(m => ({ label: typeof m === 'string' ? m : m.label, user: null })), cfg.blankLines);
+        console.log(`\n── ${k} ──\n${msg}`);
+      }
+      process.exit(0);
+    }
+    if (doResolve) {
+      require('dotenv').config({ path: path.join(ROOT, '.env') });
+      const { TelegramClient } = require('telegram');
+      const { StringSession } = require('telegram/sessions');
+      const client = new TelegramClient(new StringSession(process.env.TG_SESSION || ''), Number(process.env.TG_API_ID), process.env.TG_API_HASH, { connectionRetries: 3 });
+      await client.connect();
+      let entity = null;
+      try { entity = await client.getEntity('withdraw atm'); } catch (_) {}
+      if (!entity) {
+        for await (const d of client.iterDialogs({ limit: 500 })) {
+          if (String(d.title || '').trim().toLowerCase() === 'withdraw atm') { entity = d.entity; break; }
+        }
+      }
+      if (!entity) { console.error('❌ หากลุ่ม withdraw atm ไม่เจอ'); process.exit(1); }
+      const resolved = await resolveMentions(client, entity, cfg.mentions);
+      resolved.forEach(r => console.log(r.user
+        ? `✓ "${r.label}" → ${[r.user.firstName, r.user.lastName].filter(Boolean).join(' ')}${r.user.username ? ' @' + r.user.username : ''} (id ${r.user.id})`
+        : `✗ "${r.label}" — หาไม่เจอในกลุ่ม`));
+      process.exit(0);
+    }
+  })().catch(e => { console.error('❌', (e && e.message) || e); process.exit(1); });
+}

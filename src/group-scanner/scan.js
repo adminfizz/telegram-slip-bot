@@ -149,4 +149,8 @@ async function resolveGroup(client, ref) {
 
   console.log(`⏰ สแกนอัตโนมัติทุก ${SCAN_INTERVAL_MIN} นาที (ไม่ใช่ real-time — ให้ประกาศแก้ไข/ลบ นิ่งก่อนค่อยจับ)`);
   setInterval(() => { scanCycle('สแกนรอบใหม่').catch(e => console.error('⚠️ สแกนล้ม:', (e && e.message) || e)); }, SCAN_INTERVAL_MIN * 60 * 1000);
+
+  // แจ้งเตือนรอบวันที่ลงกลุ่ม (announce.json) — ใช้ client เดียวกับสแกน ไม่เปิด session ซ้อน
+  try { require('./announcer').start(client, entity); }
+  catch (e) { console.error('⚠️ announcer เริ่มไม่ได้:', (e && e.message) || e); }
 })();

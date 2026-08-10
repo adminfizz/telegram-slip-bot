@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "sendTime": "00:01",
+  "blankLines": 2,
+  "mentions": ["H2", "H1", "Admin 1", "Admin 2"],
+  "messages": {
+    "before3": "",
+    "before1": "",
+    "day1": "",
+    "day7": "",
+    "day9": "",
+    "day10": ""
+  }
+}

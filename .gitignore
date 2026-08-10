@@ -7,6 +7,7 @@ tokens/
 *.token.json
 
 # --- Local data (financial / runtime) ---
+.announce-state.json
 data/
 ai_usage.json
 app.log
